@@ -15,29 +15,11 @@
  */
 :root {
   --tenant-primary: 16 185 129;
-  --tenant-primary-hover: 52 211 153;
-  --tenant-primary-soft: 16 185 129;
-  --tenant-primary-foreground: 255 255 255;
-
-  /* Preto neutro de verdade — sem tingimento azul/roxo no cinza. */
-  --ink-900: 5 5 5;
-  --ink-800: 20 20 20;
-  --ink-700: 38 38 38;
-  --ink-600: 63 63 63;
-  --ink-500: 89 89 89;
-  --ink-400: 122 122 122;
-  --ink-300: 163 163 163;
-  --ink-200: 212 212 212;
-  --ink-100: 250 250 250;
-}
-
-:root[data-theme='light'] {
-  --tenant-primary: 16 185 129;
   --tenant-primary-hover: 5 150 105;
   --tenant-primary-soft: 16 185 129;
   --tenant-primary-foreground: 255 255 255;
 
-  /* Branco neutro de verdade. */
+  /* Tema claro (padrão): branco neutro de verdade. */
   --ink-900: 250 250 250;
   --ink-800: 255 255 255;
   --ink-700: 229 229 229;
@@ -47,6 +29,24 @@
   --ink-300: 82 82 82;
   --ink-200: 38 38 38;
   --ink-100: 10 10 10;
+}
+
+:root[data-theme='dark'] {
+  --tenant-primary: 16 185 129;
+  --tenant-primary-hover: 52 211 153;
+  --tenant-primary-soft: 16 185 129;
+  --tenant-primary-foreground: 255 255 255;
+
+  /* Preto neutro de verdade, sem tingimento azul/roxo no cinza. */
+  --ink-900: 5 5 5;
+  --ink-800: 20 20 20;
+  --ink-700: 38 38 38;
+  --ink-600: 63 63 63;
+  --ink-500: 89 89 89;
+  --ink-400: 122 122 122;
+  --ink-300: 163 163 163;
+  --ink-200: 212 212 212;
+  --ink-100: 250 250 250;
 }
 
 html,
@@ -171,5 +171,45 @@ body {
   }
   @page {
     margin: 0;
+  }
+}
+
+/* Troca de tema: o navegador tira uma "foto" da tela antiga e a nova é revelada
+ * em círculo a partir do botão (View Transitions). As duas camadas só precisam
+ * parar de se misturar sozinhas; o círculo é animado em ThemeContext. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
+}
+
+/* Navegadores sem View Transitions: as cores desfazem de uma para a outra. */
+html.tema-transicao,
+html.tema-transicao *,
+html.tema-transicao *::before,
+html.tema-transicao *::after {
+  transition:
+    background-color 0.45s ease,
+    color 0.45s ease,
+    border-color 0.45s ease,
+    fill 0.45s ease,
+    stroke 0.45s ease,
+    box-shadow 0.45s ease !important;
+}
+
+@keyframes tema-icone {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0) scale(1);
   }
 }
