@@ -7,6 +7,8 @@
  *   MERCADOPAGO_API_URL       só pra testes com um servidor falso (padrão: API oficial)
  */
 
+import crypto from 'node:crypto';
+
 const BASE_URL = () => (process.env.MERCADOPAGO_API_URL ?? 'https://api.mercadopago.com').replace(/\/$/, '');
 
 export class ErroMercadoPago extends Error {
@@ -94,4 +96,25 @@ export function cancelarAssinatura(id: string): Promise<AssinaturaMp> {
 export async function assinaturaDoPagamento(idPagamento: string): Promise<string | null> {
   const p = await chamar<{ preapproval_id?: string }>(`/authorized_payments/${encodeURIComponent(idPagamento)}`);
   return p.preapproval_id ?? null;
+}
+
+/** Confere a assinatura que o Mercado Pago coloca nas notificações (cabeçalho
+ * `x-signature`, formato `ts=...,v1=...`, HMAC-SHA256 com o segredo do webhook).
+ * Sem MERCADOPAGO_WEBHOOK_SECRET configurado, não há como conferir e devolve true:
+ * mesmo assim o estado real é sempre buscado na API do Mercado Pago, então uma
+ * notificação forjada não consegue alterar nada. */
+export function assinaturaDoWebhookValida(cabecalhos: { assinatura?: string; idRequisicao?: string }, idDoRecurso: string): boolean {
+  const segredo = process.env.MERCADOPAGO_WEBHOOK_SECRET?.trim();
+  if (!segredo) return true;
+  if (!cabecalhos.assinatura) return false;
+
+  const partes = Object.fromEntries(cabecalhos.assinatura.split(',').map((p) => p.trim().split('=') as [string, string]));
+  if (!partes.ts || !partes.v1) return false;
+
+  // O Mercado Pago assina com o id em minúsculas quando ele é alfanumérico.
+  const manifesto = `id:${idDoRecurso.toLowerCase()};request-id:${cabecalhos.idRequisicao ?? ''};ts:${partes.ts};`;
+  const esperado = crypto.createHmac('sha256', segredo).update(manifesto).digest('hex');
+  const recebido = Buffer.from(partes.v1, 'hex');
+  const calculado = Buffer.from(esperado, 'hex');
+  return recebido.length === calculado.length && crypto.timingSafeEqual(recebido, calculado);
 }

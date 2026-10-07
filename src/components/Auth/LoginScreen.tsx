@@ -158,9 +158,14 @@ export function LoginScreen() {
           alternarVisibilidade
         />
 
-        <AuthCheckbox checked={lembrar} onChange={(e) => setLembrar(e.target.checked)}>
-          Lembrar meu e-mail neste dispositivo
-        </AuthCheckbox>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <AuthCheckbox checked={lembrar} onChange={(e) => setLembrar(e.target.checked)}>
+            Lembrar meu e-mail
+          </AuthCheckbox>
+          <Link to="/esqueci-senha" className="text-sm font-medium text-tenant hover:underline">
+            Esqueci minha senha
+          </Link>
+        </div>
 
         <button
           type="submit"

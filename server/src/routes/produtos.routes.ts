@@ -261,6 +261,17 @@ produtosRouter.put('/:id', async (req, res) => {
   const produto = await prisma.produto.findFirst({ where: { id: req.params.id, tenantId } });
   if (!produto) return res.status(404).json({ erro: 'Produto não encontrado.' });
 
+  // SKU é único por loja, e a categoria precisa ser da própria loja (não dá pra
+  // apontar um produto pra categoria de outra empresa).
+  if (parse.data.sku && parse.data.sku !== produto.sku) {
+    const duplicado = await prisma.produto.findFirst({ where: { tenantId, sku: parse.data.sku, id: { not: produto.id } } });
+    if (duplicado) return res.status(409).json({ erro: 'Já existe um produto com esse SKU.' });
+  }
+  if (parse.data.categoriaId) {
+    const categoria = await prisma.categoria.findFirst({ where: { id: parse.data.categoriaId, tenantId } });
+    if (!categoria) return res.status(400).json({ erro: 'Categoria inválida.' });
+  }
+
   const atualizado = await prisma.produto.update({
     where: { id: produto.id },
     data: parse.data,

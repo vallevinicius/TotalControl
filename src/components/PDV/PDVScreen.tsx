@@ -18,6 +18,7 @@ import {
 import { formatarMoeda, formatarHora, formatarFormaPagamento } from '@/utils/formatters';
 import { AbrirCaixaCard } from './AbrirCaixaCard';
 import { FecharCaixaModal } from './FecharCaixaModal';
+import { ComprovanteModal, type DadosComprovante } from './ComprovanteModal';
 import type { Caixa, Cliente, FormaPagamento, Produto, Vendedor, VendaResumo } from '@/types';
 
 interface ItemCarrinho {
@@ -80,6 +81,9 @@ export function PDVScreen() {
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0);
   const [parcelas, setParcelas] = useState<number>(1);
   const [processando, setProcessando] = useState(false);
+  // Dinheiro: quanto o cliente entregou (pra calcular o troco). Vazio = não informado.
+  const [valorRecebido, setValorRecebido] = useState<number>(0);
+  const [comprovante, setComprovante] = useState<DadosComprovante | null>(null);
 
   const [termoCliente, setTermoCliente] = useState('');
   const [resultadosClientes, setResultadosClientes] = useState<Cliente[]>([]);
@@ -218,6 +222,7 @@ export function PDVScreen() {
     setResultados([]);
     setDescontoPercentual(0);
     setParcelas(1);
+    setValorRecebido(0);
     setClienteSelecionado(null);
     setTermoCliente('');
     setMostrarNovaVenda(false);
@@ -226,6 +231,7 @@ export function PDVScreen() {
   function handleMudarFormaPagamento(forma: FormaPagamento) {
     setFormaPagamento(forma);
     if (forma !== 'CARTAO_CREDITO') setParcelas(1);
+    if (forma !== 'DINHEIRO') setValorRecebido(0);
   }
 
   const subtotal = useMemo(
@@ -237,14 +243,19 @@ export function PDVScreen() {
   const ehCartaoCredito = formaPagamento === 'CARTAO_CREDITO';
   const valorTaxaCartao = ehCartaoCredito ? Number((subtotalComDesconto * TAXA_CARTAO_CREDITO).toFixed(2)) : 0;
   const totalFinal = subtotalComDesconto + valorTaxaCartao;
+  const ehDinheiro = formaPagamento === 'DINHEIRO';
+  const recebidoInformado = ehDinheiro && valorRecebido > 0;
+  const troco = recebidoInformado ? Number((valorRecebido - totalFinal).toFixed(2)) : 0;
+  // Se informou o valor recebido, ele precisa cobrir o total (senão falta dinheiro).
+  const recebidoInsuficiente = recebidoInformado && troco < 0;
 
   const vendedorObrigatorioFaltando = vendedores.length > 0 && !vendedorId;
 
   async function finalizarVenda() {
-    if (carrinho.length === 0 || vendedorObrigatorioFaltando) return;
+    if (carrinho.length === 0 || vendedorObrigatorioFaltando || recebidoInsuficiente) return;
     setProcessando(true);
     try {
-      await registerSale({
+      const venda = await registerSale({
         itens: carrinho.map((i) => ({
           productId: i.produto.id,
           quantidade: i.quantidade,
@@ -258,9 +269,26 @@ export function PDVScreen() {
         vendedorId: vendedorId || undefined,
       });
       toast.sucesso(`Venda finalizada às ${new Date().toLocaleTimeString('pt-BR')}.`);
+      // Comprovante da venda que acabou de sair (com troco, se foi em dinheiro).
+      setComprovante({
+        id: venda.id,
+        timestamp: venda.timestamp,
+        itens: venda.itens.map((i) => ({ nome: i.nomeProdutoSnapshot, quantidade: i.quantidade, valorUnitario: i.valorUnitarioPraticado, subtotal: i.subtotal })),
+        desconto: venda.desconto,
+        taxas: venda.taxas,
+        total: venda.valorTotal,
+        formaPagamento: venda.formaPagamento,
+        parcelas: venda.parcelas,
+        valorRecebido: recebidoInformado ? valorRecebido : undefined,
+        troco: recebidoInformado ? troco : undefined,
+        clienteNome: clienteSelecionado?.nome,
+        clienteTelefone: clienteSelecionado?.telefone,
+        vendedorNome: vendedores.find((v) => v.id === vendedorId)?.nome,
+      });
       setCarrinho([]);
       setDescontoPercentual(0);
       setParcelas(1);
+      setValorRecebido(0);
       setClienteSelecionado(null);
       setTermoCliente('');
       setMostrarNovaVenda(false);
@@ -276,7 +304,7 @@ export function PDVScreen() {
     setDesfazendo(true);
     try {
       await desfazerUltimaVenda();
-      toast.sucesso('Última venda desfeita | estoque devolvido.');
+      toast.sucesso('Última venda desfeita, estoque devolvido.');
       await carregarCaixa();
     } catch (erro) {
       toast.erro(erro instanceof Error ? erro.message : 'Erro ao desfazer a venda.');
@@ -402,18 +430,43 @@ export function PDVScreen() {
                     <th className="px-5 py-3 font-medium">Forma de pagamento</th>
                     <th className="px-5 py-3 font-medium text-right">Itens</th>
                     <th className="px-5 py-3 font-medium text-right">Total</th>
+                    <th className="px-5 py-3 font-medium text-right">Comprovante</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-700 bg-ink-800/40">
                   {vendasDoCaixa.map((venda) => (
                     <tr key={venda.id} className="transition-colors hover:bg-ink-800">
                       <td className="px-5 py-3.5 text-ink-300">{formatarHora(venda.timestamp, tenant)}</td>
-                      <td className="px-5 py-3.5 text-ink-300">{venda.clienteNome ?? '|'}</td>
-                      <td className="px-5 py-3.5 text-ink-300">{venda.vendedorNome ?? '|'}</td>
+                      <td className="px-5 py-3.5 text-ink-300">{venda.clienteNome ?? '-'}</td>
+                      <td className="px-5 py-3.5 text-ink-300">{venda.vendedorNome ?? '-'}</td>
                       <td className="px-5 py-3.5 text-ink-300">{formatarFormaPagamento(venda.formaPagamento)}</td>
                       <td className="px-5 py-3.5 text-right text-ink-300">{venda.quantidadeItens}</td>
                       <td className="px-5 py-3.5 text-right font-mono text-ink-100">
                         {formatarMoeda(venda.valorTotal, tenant)}
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        {venda.itens && (
+                          <button
+                            onClick={() =>
+                              setComprovante({
+                                id: venda.id,
+                                timestamp: venda.timestamp,
+                                itens: venda.itens!,
+                                desconto: venda.desconto ?? 0,
+                                taxas: venda.taxas ?? 0,
+                                total: venda.valorTotal,
+                                formaPagamento: venda.formaPagamento,
+                                parcelas: venda.parcelas,
+                                clienteNome: venda.clienteNome,
+                                clienteTelefone: venda.clienteTelefone,
+                                vendedorNome: venda.vendedorNome,
+                              })
+                            }
+                            className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
+                          >
+                            Ver
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -707,26 +760,66 @@ export function PDVScreen() {
             </div>
           )}
 
+          {ehDinheiro && (
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">Valor recebido</p>
+              <div className="flex items-center rounded-lg border border-ink-600 bg-ink-700 px-3 py-2">
+                <span className="text-ink-400">R$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={valorRecebido === 0 ? '' : valorRecebido}
+                  onChange={(e) => setValorRecebido(Number(e.target.value) || 0)}
+                  aria-label="Valor recebido em dinheiro"
+                  placeholder={totalFinal.toFixed(2)}
+                  className={['ml-2 w-full bg-transparent text-right font-mono text-ink-100 outline-none', SEM_SPINNER_NATIVO].join(' ')}
+                />
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {[totalFinal, 20, 50, 100, 200]
+                  .filter((v, i) => i === 0 || v > totalFinal)
+                  .map((v, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setValorRecebido(Number(v.toFixed(2)))}
+                      className="rounded-md border border-ink-600 px-2 py-1 text-[11px] text-ink-300 hover:border-tenant hover:text-tenant"
+                    >
+                      {i === 0 ? 'Valor exato' : formatarMoeda(v, tenant)}
+                    </button>
+                  ))}
+              </div>
+              {recebidoInformado && (
+                <p className={['mt-2 text-right text-sm font-semibold', recebidoInsuficiente ? 'text-red-400' : 'text-emerald-400'].join(' ')}>
+                  {recebidoInsuficiente ? `Faltam ${formatarMoeda(-troco, tenant)}` : `Troco: ${formatarMoeda(troco, tenant)}`}
+                </p>
+              )}
+            </div>
+          )}
+
           <button
             onClick={finalizarVenda}
-            disabled={carrinho.length === 0 || processando || vendedorObrigatorioFaltando}
+            disabled={carrinho.length === 0 || processando || vendedorObrigatorioFaltando || recebidoInsuficiente}
             className="mt-auto pt-6 text-center"
           >
             <span
               className={[
                 'block w-full rounded-xl bg-tenant py-3.5 text-sm font-semibold text-tenant-foreground transition-opacity hover:opacity-90',
-                (carrinho.length === 0 || processando || vendedorObrigatorioFaltando) && 'cursor-not-allowed opacity-40',
+                (carrinho.length === 0 || processando || vendedorObrigatorioFaltando || recebidoInsuficiente) && 'cursor-not-allowed opacity-40',
               ]
                 .filter(Boolean)
                 .join(' ')}
             >
-              {processando ? 'Finalizando…' : vendedorObrigatorioFaltando ? 'Selecione um vendedor' : 'Finalizar venda (F4)'}
+              {processando ? 'Finalizando…' : vendedorObrigatorioFaltando ? 'Selecione um vendedor' : recebidoInsuficiente ? 'Valor recebido insuficiente' : 'Finalizar venda (F4)'}
             </span>
           </button>
         </aside>
           </div>
         </>
       )}
+
+      {comprovante && <ComprovanteModal dados={comprovante} aoFechar={() => setComprovante(null)} />}
 
       {mostrarFecharCaixa && (
         <FecharCaixaModal

@@ -83,6 +83,17 @@ caixaRouter.get('/:id/vendas', async (req, res) => {
       clienteNome: v.cliente?.nome,
       vendedorNome: v.vendedor?.nome,
       quantidadeItens: v.itens.reduce((acc, i) => acc + i.quantidade, 0),
+      // Detalhe suficiente pra reemitir o comprovante da venda.
+      clienteTelefone: v.cliente?.telefone ?? undefined,
+      desconto: Number(v.desconto),
+      taxas: Number(v.taxas),
+      parcelas: v.parcelas,
+      itens: v.itens.map((i) => ({
+        nome: i.nomeProdutoSnapshot,
+        quantidade: i.quantidade,
+        valorUnitario: Number(i.valorUnitarioPraticado),
+        subtotal: Number(i.subtotal),
+      })),
     })),
   );
 });

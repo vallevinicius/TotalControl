@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { assinarToken, requireAuth } from '../middleware/auth.js';
 import { cpfValido, normalizarCnpj } from '../lib/documentos.js';
-import { emitirSessao, renovarSessao, revogarSessao } from '../lib/sessao.js';
+import crypto from 'node:crypto';
+import { emitirSessao, renovarSessao, revogarSessao, revogarTodasAsSessoes } from '../lib/sessao.js';
+import { emailRecuperacaoDeSenha, emailSenhaAlterada, enviarEmail } from '../lib/email.js';
+import { registrarAuditoria } from '../lib/auditoria.js';
 import { mensagemDeValidacao, senhaForte, VERSAO_TERMOS } from '../lib/senha.js';
 import { calcularTrialExpiraEm, LIMITES_POR_PLANO, motivoAcessoExpirado } from '../config/planos.js';
 
@@ -259,6 +262,7 @@ authRouter.get('/me', requireAuth, async (req, res) => {
       tenantId: tenant.id,
       nome: usuario.nome,
       email: usuario.email,
+      telefone: usuario.telefone ?? undefined,
       papel: usuario.papel,
       permissoes: (usuario.permissoes as string[] | null) ?? undefined,
       raiz: usuario.raiz,
@@ -320,4 +324,111 @@ authRouter.post('/trocar-loja', requireAuth, async (req, res) => {
 
   const token = assinarToken({ id: usuario.id, tenantId: parse.data.tenantId, papel: usuario.papel, tv: usuario.tokenVersion });
   res.json({ token });
+});
+
+// ----------------------------------------------------------------------------
+// Recuperação e troca de senha
+// ----------------------------------------------------------------------------
+
+const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
+const urlDoApp = () => (process.env.APP_URL ?? 'http://localhost:3099').replace(/\/$/, '');
+
+const esqueciSchema = z.object({ email: z.string().email() });
+
+/** Pede o link de redefinição. A resposta é SEMPRE a mesma, exista ou não a conta,
+ * pra ninguém descobrir quais e-mails estão cadastrados. O envio acontece depois
+ * de responder, então o tempo também não denuncia. */
+authRouter.post('/esqueci-senha', async (req, res) => {
+  const parse = esqueciSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: 'Informe um e-mail válido.' });
+
+  res.json({ mensagem: 'Se existir uma conta com esse e-mail, enviamos um link para criar uma nova senha.' });
+
+  try {
+    const usuario = await prisma.usuario.findUnique({ where: { email: parse.data.email } });
+    if (!usuario?.ativo) return;
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    await prisma.$transaction([
+      // Só o link mais recente vale.
+      prisma.tokenSenha.deleteMany({ where: { usuarioId: usuario.id, usadoEm: null } }),
+      prisma.tokenSenha.create({
+        data: { usuarioId: usuario.id, tokenHash: hashToken(token), expiraEm: new Date(Date.now() + 3_600_000) },
+      }),
+    ]);
+    const link = `${urlDoApp()}/redefinir-senha?token=${token}`;
+    await enviarEmail({ para: usuario.email, ...emailRecuperacaoDeSenha(usuario.nome, link) });
+  } catch (erro) {
+    console.error('Falha ao enviar o e-mail de recuperação de senha:', erro);
+  }
+});
+
+const redefinirSchema = z.object({ token: z.string().min(20), senha: senhaForte });
+
+authRouter.post('/redefinir-senha', async (req, res) => {
+  const parse = redefinirSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: mensagemDeValidacao(parse.error, 'Link ou senha inválidos.') });
+
+  const registro = await prisma.tokenSenha.findUnique({
+    where: { tokenHash: hashToken(parse.data.token) },
+    include: { usuario: true },
+  });
+  if (!registro || registro.usadoEm || registro.expiraEm < new Date() || !registro.usuario.ativo) {
+    return res.status(400).json({ erro: 'Este link expirou ou já foi usado. Peça um novo em "Esqueci minha senha".' });
+  }
+
+  // Consome o link (condicional: dois cliques simultâneos não passam os dois).
+  const consumido = await prisma.tokenSenha.updateMany({ where: { id: registro.id, usadoEm: null }, data: { usadoEm: new Date() } });
+  if (consumido.count === 0) return res.status(400).json({ erro: 'Este link já foi usado.' });
+
+  await prisma.usuario.update({ where: { id: registro.usuarioId }, data: { senhaHash: await bcrypt.hash(parse.data.senha, 10) } });
+  // Senha nova: quem estava logado com a antiga (inclusive um invasor) cai.
+  await revogarTodasAsSessoes(registro.usuarioId);
+  await registrarAuditoria(registro.usuario.tenantId, registro.usuarioId, 'usuario.redefinirSenha', 'Por link enviado por e-mail');
+  enviarEmail({ para: registro.usuario.email, ...emailSenhaAlterada(registro.usuario.nome) }).catch(() => undefined);
+
+  res.json({ ok: true });
+});
+
+const alterarSenhaSchema = z.object({ senhaAtual: z.string().min(1), novaSenha: senhaForte });
+
+/** Troca a própria senha (logado). Derruba as outras sessões, mas devolve uma
+ * nova pra este aparelho continuar logado. */
+authRouter.post('/alterar-senha', requireAuth, async (req, res) => {
+  const parse = alterarSenhaSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: mensagemDeValidacao(parse.error) });
+
+  const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario!.id } });
+  if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+  if (!(await bcrypt.compare(parse.data.senhaAtual, usuario.senhaHash))) {
+    return res.status(400).json({ erro: 'A senha atual está incorreta.' });
+  }
+  if (parse.data.senhaAtual === parse.data.novaSenha) {
+    return res.status(400).json({ erro: 'A nova senha precisa ser diferente da atual.' });
+  }
+
+  await prisma.usuario.update({ where: { id: usuario.id }, data: { senhaHash: await bcrypt.hash(parse.data.novaSenha, 10) } });
+  await revogarTodasAsSessoes(usuario.id);
+  await registrarAuditoria(req.usuario!.tenantId, usuario.id, 'usuario.alterarSenha');
+  enviarEmail({ para: usuario.email, ...emailSenhaAlterada(usuario.nome) }).catch(() => undefined);
+
+  const atualizado = await prisma.usuario.findUniqueOrThrow({ where: { id: usuario.id } });
+  res.json(await emitirSessao(atualizado, req, req.usuario!.tenantId));
+});
+
+const perfilSchema = z.object({
+  nome: z.string().trim().min(2).max(191),
+  telefone: z.string().trim().max(30).optional(),
+});
+
+/** Editar o próprio nome e telefone. */
+authRouter.put('/perfil', requireAuth, async (req, res) => {
+  const parse = perfilSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: 'Informe um nome válido.' });
+
+  await prisma.usuario.update({
+    where: { id: req.usuario!.id },
+    data: { nome: parse.data.nome, telefone: parse.data.telefone === undefined ? undefined : parse.data.telefone || null },
+  });
+  res.json({ ok: true });
 });

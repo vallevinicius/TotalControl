@@ -168,6 +168,7 @@ model Usuario {
   criadoEm  DateTime     @default(now())
 
   sessoes                SessaoRefresh[]
+  tokensSenha            TokenSenha[]
   tenant                 Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transacoes             Transacao[]
   lancamentosFinanceiros LancamentoFinanceiro[]
@@ -382,6 +383,20 @@ model SessaoRefresh {
   criadoEm  DateTime  @default(now())
   ip        String?
   userAgent String?   @db.VarChar(255)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+}
+
+/// Link de redefinição de senha enviado por e-mail: uso único, vale 1 hora, guardado só como hash.
+model TokenSenha {
+  id        String    @id @default(uuid())
+  usuarioId String
+  tokenHash String    @unique
+  expiraEm  DateTime
+  usadoEm   DateTime?
+  criadoEm  DateTime  @default(now())
 
   usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
 

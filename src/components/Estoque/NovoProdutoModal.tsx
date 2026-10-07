@@ -1,26 +1,29 @@
 import { useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
-import type { Categoria } from '@/types';
+import type { Categoria, Produto } from '@/types';
 import type { NovoProdutoPayload } from '@/services/apiService';
 
 interface NovoProdutoModalProps {
+  /** Sem `produto` = cadastrando; com `produto` = editando (o saldo muda só por entrada de estoque). */
+  produto?: Produto;
   categorias: Categoria[];
   aoFechar: () => void;
   aoConfirmar: (dados: NovoProdutoPayload) => Promise<void>;
   aoCriarCategoria: (nome: string) => Promise<Categoria>;
 }
 
-export function NovoProdutoModal({ categorias, aoFechar, aoConfirmar, aoCriarCategoria }: NovoProdutoModalProps) {
+export function NovoProdutoModal({ produto, categorias, aoFechar, aoConfirmar, aoCriarCategoria }: NovoProdutoModalProps) {
   const toast = useToast();
-  const [nome, setNome] = useState('');
-  const [sku, setSku] = useState('');
-  const [categoriaId, setCategoriaId] = useState(categorias[0]?.id ?? '');
+  const editando = Boolean(produto);
+  const [nome, setNome] = useState(produto?.nome ?? '');
+  const [sku, setSku] = useState(produto?.sku ?? '');
+  const [categoriaId, setCategoriaId] = useState(produto?.categoriaId ?? categorias[0]?.id ?? '');
   const [novaCategoria, setNovaCategoria] = useState('');
   const [criandoCategoria, setCriandoCategoria] = useState(false);
-  const [precoCusto, setPrecoCusto] = useState<number>(0);
-  const [precoVenda, setPrecoVenda] = useState<number>(0);
-  const [quantidadeEmEstoque, setQuantidadeEmEstoque] = useState<number>(0);
-  const [estoqueMinimo, setEstoqueMinimo] = useState<number>(0);
+  const [precoCusto, setPrecoCusto] = useState<number>(produto?.precoCusto ?? 0);
+  const [precoVenda, setPrecoVenda] = useState<number>(produto?.precoVenda ?? 0);
+  const [quantidadeEmEstoque, setQuantidadeEmEstoque] = useState<number>(produto?.quantidadeEmEstoque ?? 0);
+  const [estoqueMinimo, setEstoqueMinimo] = useState<number>(produto?.estoqueMinimo ?? 0);
   const [enviando, setEnviando] = useState(false);
 
   async function handleCriarCategoria() {
@@ -54,10 +57,10 @@ export function NovoProdutoModal({ categorias, aoFechar, aoConfirmar, aoCriarCat
         quantidadeEmEstoque,
         estoqueMinimo,
       });
-      toast.sucesso(`Produto "${nome.trim()}" cadastrado.`);
+      toast.sucesso(editando ? `Produto "${nome.trim()}" atualizado.` : `Produto "${nome.trim()}" cadastrado.`);
       aoFechar();
     } catch (e) {
-      toast.erro(e instanceof Error ? e.message : 'Erro ao cadastrar produto.');
+      toast.erro(e instanceof Error ? e.message : 'Erro ao salvar o produto.');
     } finally {
       setEnviando(false);
     }
@@ -66,7 +69,7 @@ export function NovoProdutoModal({ categorias, aoFechar, aoConfirmar, aoCriarCat
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-md rounded-xl border border-ink-700 bg-ink-800 p-6">
-        <p className="font-display text-lg font-semibold text-ink-100">Cadastrar novo produto</p>
+        <p className="font-display text-lg font-semibold text-ink-100">{editando ? 'Editar produto' : 'Cadastrar novo produto'}</p>
 
         <div className="mt-5 space-y-4">
           <label className="block text-sm text-ink-300">
@@ -80,7 +83,7 @@ export function NovoProdutoModal({ categorias, aoFechar, aoConfirmar, aoCriarCat
           </label>
 
           <label className="block text-sm text-ink-300">
-            Quantidade em estoque (SKU)
+            SKU (código do produto)
             <input
               value={sku}
               onChange={(e) => setSku(e.target.value)}
@@ -145,6 +148,13 @@ export function NovoProdutoModal({ categorias, aoFechar, aoConfirmar, aoCriarCat
                 className="mt-1 w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 focus:border-tenant focus:outline-none"
               />
             </label>
+            {editando ? (
+              <div className="text-sm text-ink-300">
+                Em estoque agora
+                <p className="mt-1 rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 font-mono text-ink-100">{produto!.quantidadeEmEstoque}</p>
+                <p className="mt-1 text-[11px] text-ink-500">Para mudar o saldo, use "+ Entrada".</p>
+              </div>
+            ) : (
             <label className="block text-sm text-ink-300">
               Estoque inicial
               <input
@@ -155,6 +165,7 @@ export function NovoProdutoModal({ categorias, aoFechar, aoConfirmar, aoCriarCat
                 className="mt-1 w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 focus:border-tenant focus:outline-none"
               />
             </label>
+            )}
             <label className="block text-sm text-ink-300">
               Estoque mínimo
               <input
@@ -177,7 +188,7 @@ export function NovoProdutoModal({ categorias, aoFechar, aoConfirmar, aoCriarCat
             disabled={enviando}
             className="rounded-lg bg-tenant px-4 py-2 text-sm font-semibold text-tenant-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {enviando ? 'Cadastrando…' : 'Cadastrar produto'}
+            {enviando ? 'Salvando…' : editando ? 'Salvar alterações' : 'Cadastrar produto'}
           </button>
         </div>
       </div>

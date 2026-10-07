@@ -1,15 +1,16 @@
+import { dadoLegal } from '@/config/empresa';
 import { LegalLayout } from './LegalLayout';
 
 /** Texto padrão/genérico de mercado, baseado nos princípios da LGPD —
  * ponto de partida pra revisão jurídica antes de valer oficialmente. Os
- * campos entre [colchetes] precisam ser preenchidos com os dados reais da
- * empresa (razão social, CNPJ, e-mail do encarregado/DPO) antes de publicar. */
+ * dados da empresa (razão social, CNPJ, e-mail do encarregado/DPO) vêm de
+ * src/config/empresa.ts. */
 export function PrivacidadeScreen() {
   return (
     <LegalLayout titulo="Política de Privacidade" atualizadoEm="23 de setembro de 2026">
       <p>
-        Esta Política de Privacidade explica como [Razão Social da Total Software LTDA], inscrita
-        no CNPJ sob o nº [00.000.000/0000-00] ("Total Software", "nós"), coleta, usa e protege os
+        Esta Política de Privacidade explica como {dadoLegal('razaoSocial')}, inscrita
+        no CNPJ sob o nº {dadoLegal('cnpj')} ("Total Software", "nós"), coleta, usa e protege os
         dados pessoais de quem usa a plataforma Total Control, em conformidade com a Lei Geral de
         Proteção de Dados (Lei nº 13.709/2018 — LGPD).
       </p>
@@ -47,8 +48,7 @@ export function PrivacidadeScreen() {
         <li>Revogar o consentimento, quando o tratamento for baseado nele.</li>
       </ul>
       <p>
-        Para exercer esses direitos, entre em contato pelo e-mail [e-mail do encarregado/DPO da
-        Total Software].
+        Para exercer esses direitos, entre em contato pelo e-mail {dadoLegal('emailDpo')}.
       </p>
 
       <h2>5. Cookies e tecnologias semelhantes</h2>
@@ -79,7 +79,7 @@ export function PrivacidadeScreen() {
       <h2>9. Contato</h2>
       <p>
         Dúvidas sobre esta Política de Privacidade ou sobre o tratamento dos seus dados podem ser
-        enviadas para [e-mail do encarregado/DPO da Total Software].
+        enviadas para {dadoLegal('emailDpo')}.
       </p>
     </LegalLayout>
   );

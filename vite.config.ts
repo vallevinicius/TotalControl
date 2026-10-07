@@ -1,9 +1,24 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/** Avisa no build quando os dados legais da empresa (Termos e Privacidade) ainda estão em branco. */
+function avisarDadosLegaisPendentes(): Plugin {
+  return {
+    name: 'avisar-dados-legais-pendentes',
+    buildStart() {
+      const arquivo = readFileSync(fileURLToPath(new URL('./src/config/empresa.ts', import.meta.url)), 'utf8');
+      const faltando = [...arquivo.matchAll(/^\s{2}(razaoSocial|cnpj|emailContato|emailDpo):\s*'',/gm)].map((m) => m[1]);
+      if (faltando.length > 0) {
+        this.warn(`Termos e Privacidade com dados pendentes em src/config/empresa.ts: ${faltando.join(', ')}. Preencha antes de publicar.`);
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), avisarDadosLegaisPendentes()],
   resolve: {
     alias: {
       // Espelha o path mapping "@/*" definido em tsconfig.json.

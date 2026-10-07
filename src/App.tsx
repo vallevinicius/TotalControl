@@ -19,6 +19,9 @@ import { MeuPlanoScreen } from '@/components/Conta/MeuPlanoScreen';
 import { AuditoriaScreen } from '@/components/Conta/AuditoriaScreen';
 import { LoginScreen } from '@/components/Auth/LoginScreen';
 import { RegisterScreen } from '@/components/Auth/RegisterScreen';
+import { EsqueciSenhaScreen } from '@/components/Auth/EsqueciSenhaScreen';
+import { RedefinirSenhaScreen } from '@/components/Auth/RedefinirSenhaScreen';
+import { MinhaContaScreen } from '@/components/Conta/MinhaContaScreen';
 import { AdminScreen } from '@/components/Admin/AdminScreen';
 import { LandingPage } from '@/components/Marketing/LandingPage';
 import { NotFoundScreen } from '@/components/Common/NotFoundScreen';
@@ -80,6 +83,24 @@ function Roteador() {
           <RotaPublica>
             <LoginScreen />
           </RotaPublica>
+        }
+      />
+      <Route
+        path="/esqueci-senha"
+        element={
+          <RotaPublica>
+            <EsqueciSenhaScreen />
+          </RotaPublica>
+        }
+      />
+      {/* Aberta mesmo com sessão: quem clica no link do e-mail pode já estar logado neste navegador. */}
+      <Route path="/redefinir-senha" element={<RedefinirSenhaScreen />} />
+      <Route
+        path="/conta"
+        element={
+          <RotaProtegida>
+            <MinhaContaScreen />
+          </RotaProtegida>
         }
       />
       <Route

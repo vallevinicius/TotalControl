@@ -147,3 +147,29 @@ body {
     transform: translate3d(24px, 18px, 0);
   }
 }
+
+/* Comprovante de venda: ao imprimir, só ele aparece, em largura de bobina (80 mm). */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .comprovante-impressao,
+  .comprovante-impressao * {
+    visibility: visible;
+  }
+  .comprovante-impressao {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    margin: 0;
+    padding: 4mm;
+    box-shadow: none;
+    border: 0;
+    color: #000;
+    background: #fff;
+  }
+  @page {
+    margin: 0;
+  }
+}

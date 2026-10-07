@@ -1,15 +1,15 @@
+import { dadoLegal } from '@/config/empresa';
 import { LegalLayout } from './LegalLayout';
 
 /** Texto padrão/genérico de mercado — ponto de partida pra revisão jurídica
- * antes de valer oficialmente. Os campos entre [colchetes] precisam ser
- * preenchidos com os dados reais da empresa antes de publicar. */
+ * antes de valer oficialmente. Os dados da empresa vêm de src/config/empresa.ts. */
 export function TermosScreen() {
   return (
     <LegalLayout titulo="Termos de Uso" atualizadoEm="23 de setembro de 2026">
       <p>
         Estes Termos de Uso regulam o acesso e uso da plataforma Total Control ("Plataforma",
-        "Serviço"), oferecida por [Razão Social da Total Software LTDA], inscrita no CNPJ sob o nº
-        [00.000.000/0000-00] ("Total Software", "nós"). Ao criar uma conta ou usar o Serviço, você
+        "Serviço"), oferecida por {dadoLegal('razaoSocial')}, inscrita no CNPJ sob o nº
+        {dadoLegal('cnpj')} ("Total Software", "nós"). Ao criar uma conta ou usar o Serviço, você
         ("Cliente", "você") concorda com estes Termos.
       </p>
 
@@ -76,7 +76,7 @@ export function TermosScreen() {
 
       <h2>9. Contato</h2>
       <p>
-        Dúvidas sobre estes Termos podem ser enviadas para [e-mail de contato da Total Software].
+        Dúvidas sobre estes Termos podem ser enviadas para {dadoLegal('emailContato')}.
       </p>
     </LegalLayout>
   );

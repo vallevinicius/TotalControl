@@ -11,6 +11,7 @@ import {
   getCategorias,
   registerStockEntry,
   createProduct,
+  updateProduct,
   createCategoria,
   deactivateProduct,
   importarProdutos,
@@ -32,6 +33,7 @@ export function EstoqueScreen() {
   const [carregando, setCarregando] = useState(true);
   const [produtoParaEntrada, setProdutoParaEntrada] = useState<Produto | null>(null);
   const [mostrarNovoProduto, setMostrarNovoProduto] = useState(false);
+  const [produtoParaEditar, setProdutoParaEditar] = useState<Produto | null>(null);
   const [mostrarSugestao, setMostrarSugestao] = useState(false);
   const [mostrarImportar, setMostrarImportar] = useState(false);
   const [termoBusca, setTermoBusca] = useState('');
@@ -182,7 +184,7 @@ export function EstoqueScreen() {
               <tr>
                 <th className="px-5 py-3 font-medium">Produto</th>
                 <th className="px-5 py-3 font-medium">Categoria</th>
-                <th className="px-5 py-3 font-medium">Quantidade</th>
+                <th className="px-5 py-3 font-medium">SKU</th>
                 <th className="px-5 py-3 font-medium text-right">Custo</th>
                 <th className="px-5 py-3 font-medium text-right">Venda</th>
                 <th className="px-5 py-3 font-medium text-right">Em estoque</th>
@@ -213,6 +215,12 @@ export function EstoqueScreen() {
                         className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
                       >
                         + Entrada
+                      </button>
+                      <button
+                        onClick={() => setProdutoParaEditar(produto)}
+                        className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
+                      >
+                        Editar
                       </button>
                       <button
                         onClick={() => excluirProduto(produto)}
@@ -247,6 +255,24 @@ export function EstoqueScreen() {
           aoFechar={() => setMostrarNovoProduto(false)}
           aoConfirmar={async (dados) => {
             await createProduct(dados);
+            await carregarDados();
+          }}
+          aoCriarCategoria={async (nome) => {
+            const categoria = await createCategoria(nome);
+            setCategorias((atual) => [...atual, categoria]);
+            return categoria;
+          }}
+        />
+      )}
+
+      {produtoParaEditar && (
+        <NovoProdutoModal
+          produto={produtoParaEditar}
+          categorias={categorias}
+          aoFechar={() => setProdutoParaEditar(null)}
+          aoConfirmar={async ({ quantidadeEmEstoque: _saldo, ...alteracoes }) => {
+            // O saldo não vai na edição: ele só muda por entrada de estoque e por venda.
+            await updateProduct(produtoParaEditar.id, alteracoes);
             await carregarDados();
           }}
           aoCriarCategoria={async (nome) => {

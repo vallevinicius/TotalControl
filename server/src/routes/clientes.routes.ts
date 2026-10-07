@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
+import { registrarAuditoria } from '../lib/auditoria.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { lerPaginacao, montarResposta } from '../lib/paginacao.js';
 
@@ -83,9 +84,16 @@ clientesRouter.put('/:id', async (req, res) => {
   const cliente = await prisma.cliente.findFirst({ where: { id: req.params.id, tenantId } });
   if (!cliente) return res.status(404).json({ erro: 'Cliente não encontrado.' });
 
+  // Campo enviado vazio apaga o valor ("" vira null); campo omitido não muda.
+  const vazioParaNulo = (v: string | undefined) => (v === undefined ? undefined : v.trim() === '' ? null : v.trim());
   const atualizado = await prisma.cliente.update({
     where: { id: cliente.id },
-    data: { ...parse.data, email: parse.data.email || undefined },
+    data: {
+      nome: parse.data.nome,
+      telefone: vazioParaNulo(parse.data.telefone),
+      email: vazioParaNulo(parse.data.email),
+      cpfCnpj: vazioParaNulo(parse.data.cpfCnpj),
+    },
   });
   res.json(serializarCliente(atualizado));
 });
@@ -122,6 +130,12 @@ clientesRouter.delete('/:id', async (req, res) => {
   const cliente = await prisma.cliente.findFirst({ where: { id: req.params.id, tenantId } });
   if (!cliente) return res.status(404).json({ erro: 'Cliente não encontrado.' });
 
-  await prisma.cliente.delete({ where: { id: cliente.id } });
+  // As vendas do cliente são registros financeiros da loja e ficam; só o vínculo
+  // com a pessoa é removido, junto com os dados pessoais dela (nome, telefone, CPF).
+  await prisma.$transaction([
+    prisma.transacao.updateMany({ where: { tenantId, clienteId: cliente.id }, data: { clienteId: null } }),
+    prisma.cliente.delete({ where: { id: cliente.id } }),
+  ]);
+  await registrarAuditoria(tenantId, req.usuario!.id, 'cliente.excluir', cliente.nome);
   res.status(204).send();
 });

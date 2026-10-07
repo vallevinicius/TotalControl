@@ -48,6 +48,10 @@ export const limiteLoginPorIp = limitador({ janelaMin: 15, limite: 60, ignorarSu
 export const limiteLoginAdmin = limitador({ janelaMin: 15, limite: 8, porConta: true, ignorarSucesso: true });
 /** Código do 2FA do admin: só 6 dígitos, então o teto por IP precisa ser baixo. */
 export const limiteCodigoAdmin = limitador({ janelaMin: 15, limite: 10, ignorarSucesso: true });
+/** Pedido de link de senha: poucos por hora por IP e e-mail (evita encher a caixa de alguém de e-mails). */
+export const limiteEsqueciSenha = limitador({ janelaMin: 60, limite: 5, porConta: true });
+/** Redefinir/alterar senha: o token é longo, mas o teto segura tentativa em massa. */
+export const limiteRedefinirSenha = limitador({ janelaMin: 15, limite: 20 });
 /** Renovação de sessão: uso normal é 1 a cada 30 min por pessoa; o teto segura tentativa de adivinhar tokens. */
 export const limiteRefresh = limitador({ janelaMin: 15, limite: 60 });
 /** Cadastro: segura quem cria contas de teste em série. */

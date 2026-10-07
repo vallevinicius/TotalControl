@@ -8,6 +8,7 @@ import { PRECOS_MENSAIS, motivoAcessoExpirado, planoAssinavel, type PlanoAssinav
 import {
   ErroMercadoPago,
   assinaturaDoPagamento,
+  assinaturaDoWebhookValida,
   buscarAssinatura,
   cancelarAssinatura,
   criarAssinatura,
@@ -100,6 +101,9 @@ assinaturaRouter.post('/webhook', async (req, res) => {
   const tipo = String(req.body?.type ?? req.query.type ?? req.query.topic ?? '');
   const id = String(req.body?.data?.id ?? req.query['data.id'] ?? req.query.id ?? '');
   if (!id) return res.status(200).json({ ok: true });
+  if (!assinaturaDoWebhookValida({ assinatura: req.get('x-signature'), idRequisicao: req.get('x-request-id') }, id)) {
+    return res.status(401).json({ erro: 'Assinatura da notificação inválida.' });
+  }
 
   try {
     if (tipo === 'subscription_preapproval' || tipo === 'preapproval') {

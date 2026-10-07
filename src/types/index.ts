@@ -102,6 +102,7 @@ export interface Usuario {
   tenantId: string;
   nome: string;
   email: string;
+  telefone?: string;
   papel: PapelUsuario;
   /**
    * Telas que este usuário pode acessar. `undefined` = acesso total (contas
@@ -277,6 +278,12 @@ export interface VendaResumo {
   clienteNome?: string;
   vendedorNome?: string;
   quantidadeItens: number;
+  /** Detalhe da venda, usado pra reemitir o comprovante. */
+  clienteTelefone?: string;
+  desconto?: number;
+  taxas?: number;
+  parcelas?: number;
+  itens?: Array<{ nome: string; quantidade: number; valorUnitario: number; subtotal: number }>;
 }
 
 /** Estrutura agregada consumida pela tela de Relatórios. */

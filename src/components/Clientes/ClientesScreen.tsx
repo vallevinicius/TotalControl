@@ -4,13 +4,15 @@ import { LoadingState } from '@/components/Common/LoadingState';
 import { Paginacao } from '@/components/Common/Paginacao';
 import { useTenant } from '@/contexts/TenantContext';
 import { useToast } from '@/contexts/ToastContext';
-import { getClientes, createCliente, getHistoricoCliente } from '@/services/apiService';
+import { useConfirm } from '@/contexts/ConfirmContext';
+import { getClientes, createCliente, updateCliente, deleteCliente, getHistoricoCliente } from '@/services/apiService';
 import { formatarMoeda } from '@/utils/formatters';
 import type { Cliente, HistoricoCliente } from '@/types';
 
 export function ClientesScreen() {
   const { tenant } = useTenant();
   const toast = useToast();
+  const confirmar = useConfirm();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
@@ -22,6 +24,7 @@ export function ClientesScreen() {
   const [historico, setHistorico] = useState<HistoricoCliente | null>(null);
   const [carregandoHistorico, setCarregandoHistorico] = useState(false);
 
+  const [clienteEditando, setClienteEditando] = useState<Cliente | null>(null);
   const [nome, setNome] = useState('');
   const [telefone, setTelefone] = useState('');
   const [email, setEmail] = useState('');
@@ -60,21 +63,59 @@ export function ClientesScreen() {
     }
   }
 
+  function limparFormulario() {
+    setClienteEditando(null);
+    setNome('');
+    setTelefone('');
+    setEmail('');
+    setCpfCnpj('');
+    setMostrarFormulario(false);
+  }
+
+  function iniciarEdicao(cliente: Cliente) {
+    setClienteEditando(cliente);
+    setNome(cliente.nome);
+    setTelefone(cliente.telefone ?? '');
+    setEmail(cliente.email ?? '');
+    setCpfCnpj(cliente.cpfCnpj ?? '');
+    setMostrarFormulario(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function excluir(cliente: Cliente) {
+    const ok = await confirmar({
+      titulo: `Excluir "${cliente.nome}"?`,
+      descricao: 'Os dados pessoais do cliente são apagados. As vendas dele continuam no histórico da loja, sem o nome.',
+      textoConfirmar: 'Excluir',
+      perigoso: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteCliente(cliente.id);
+      toast.sucesso(`"${cliente.nome}" excluído.`);
+      await carregarClientes();
+    } catch (err) {
+      toast.erro(err instanceof Error ? err.message : 'Erro ao excluir cliente.');
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!nome.trim()) return;
     setEnviando(true);
     try {
-      await createCliente({ nome: nome.trim(), telefone: telefone || undefined, email: email || undefined, cpfCnpj: cpfCnpj || undefined });
-      toast.sucesso(`Cliente "${nome.trim()}" cadastrado.`);
-      setNome('');
-      setTelefone('');
-      setEmail('');
-      setCpfCnpj('');
-      setMostrarFormulario(false);
+      if (clienteEditando) {
+        // Na edição, vazio apaga o valor antigo.
+        await updateCliente(clienteEditando.id, { nome: nome.trim(), telefone, email, cpfCnpj });
+        toast.sucesso(`Cliente "${nome.trim()}" atualizado.`);
+      } else {
+        await createCliente({ nome: nome.trim(), telefone: telefone || undefined, email: email || undefined, cpfCnpj: cpfCnpj || undefined });
+        toast.sucesso(`Cliente "${nome.trim()}" cadastrado.`);
+      }
+      limparFormulario();
       await carregarClientes();
     } catch (err) {
-      toast.erro(err instanceof Error ? err.message : 'Erro ao cadastrar cliente.');
+      toast.erro(err instanceof Error ? err.message : 'Erro ao salvar cliente.');
     } finally {
       setEnviando(false);
     }
@@ -90,7 +131,7 @@ export function ClientesScreen() {
           className="w-full max-w-xs rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none"
         />
         <button
-          onClick={() => setMostrarFormulario((atual) => !atual)}
+          onClick={() => (mostrarFormulario ? limparFormulario() : setMostrarFormulario(true))}
           className="rounded-lg bg-tenant px-4 py-2 text-sm font-semibold text-tenant-foreground hover:opacity-90"
         >
           {mostrarFormulario ? 'Cancelar' : '+ Novo cliente'}
@@ -144,7 +185,7 @@ export function ClientesScreen() {
               disabled={enviando}
               className="rounded-lg bg-tenant px-4 py-2 text-sm font-semibold text-tenant-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {enviando ? 'Salvando…' : 'Salvar cliente'}
+              {enviando ? 'Salvando…' : clienteEditando ? 'Salvar alterações' : 'Salvar cliente'}
             </button>
           </div>
         </form>
@@ -174,16 +215,30 @@ export function ClientesScreen() {
               {clientes.map((cliente) => (
                 <tr key={cliente.id} className="transition-colors hover:bg-ink-800">
                   <td className="px-5 py-3.5 font-medium text-ink-100">{cliente.nome}</td>
-                  <td className="px-5 py-3.5 text-ink-300">{cliente.telefone ?? '|'}</td>
-                  <td className="px-5 py-3.5 text-ink-300">{cliente.email ?? '|'}</td>
-                  <td className="px-5 py-3.5 font-mono text-xs text-ink-400">{cliente.cpfCnpj ?? '|'}</td>
+                  <td className="px-5 py-3.5 text-ink-300">{cliente.telefone ?? '-'}</td>
+                  <td className="px-5 py-3.5 text-ink-300">{cliente.email ?? '-'}</td>
+                  <td className="px-5 py-3.5 font-mono text-xs text-ink-400">{cliente.cpfCnpj ?? '-'}</td>
                   <td className="px-5 py-3.5 text-right">
-                    <button
-                      onClick={() => abrirHistorico(cliente)}
-                      className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
-                    >
-                      Histórico
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => abrirHistorico(cliente)}
+                        className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
+                      >
+                        Histórico
+                      </button>
+                      <button
+                        onClick={() => iniciarEdicao(cliente)}
+                        className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => excluir(cliente)}
+                        className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400"
+                      >
+                        Excluir
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

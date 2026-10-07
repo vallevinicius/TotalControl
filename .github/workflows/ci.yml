@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: totalcontrol
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      # Os testes criam e recriam o banco "totalcontrol_test" neste servidor.
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/totalcontrol
+      VITE_SITE_URL: http://localhost:3099
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Instalar dependências
+        run: |
+          npm ci
+          npm --prefix server ci
+
+      - name: Front-end (tipos e build)
+        run: npx tsc -b && npx vite build
+
+      - name: API (tipos)
+        run: |
+          npm --prefix server exec prisma generate
+          npm --prefix server run typecheck
+
+      - name: API (testes automatizados)
+        run: npm --prefix server test

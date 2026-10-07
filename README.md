@@ -31,19 +31,21 @@ Depois, dentro de `server/`:
 ```bash
 cd server
 npm install
-npx prisma migrate dev --name init   # cria as tabelas no banco
+npx prisma migrate deploy             # cria as tabelas no banco
 npx prisma db seed                   # cria uma loja + usuário de teste
 ```
 
-O seed cria o login `admin@totalcontrol.local` / senha `Admin@123`. Você
-também pode criar uma loja nova pela tela de registro do app.
+O seed cria uma empresa de demonstração (plano Pro) com um administrador. A senha
+**não é fixa**: sai aleatória e aparece uma única vez no terminal (para escolher,
+use `SEED_EMAIL` e `SEED_SENHA`). Ele se recusa a rodar com `NODE_ENV=production`.
+Você também pode criar uma loja nova pela tela de registro do app.
 
 ### 1.1. Painel interno da Total Software
 
 Entre pela mesma tela de login do app (`/login`) com o `ADMIN_EMAIL`/`ADMIN_SENHA`
 definidos no `server/.env`: quem não é usuário de nenhuma loja cai direto em
 `/admin`. Esse login é de uso exclusivo da equipe da Total Software e reúne, em
-um só painel, o que antes ficava no site totalSoftwareAdmin:
+um só painel (o antigo site de administração do Total Control foi descontinuado):
 
 - indicadores gerais (empresas, lojas, usuários, testes grátis, vendas e faturamento do mês);
 - lista de empresas com busca e filtros por situação e plano;

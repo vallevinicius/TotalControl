@@ -10,6 +10,7 @@ import {
   IconeAuditoria,
   IconeCadeado,
   IconeCaixa,
+  IconeConta,
   IconeClientes,
   IconeDashboard,
   IconeEstoque,
@@ -97,8 +98,8 @@ export function Sidebar({ aberta, aoFechar }: SidebarProps) {
     },
     {
       rotulo: 'Conta',
-      visivel: contaAdmin || Boolean(usuarioAtual?.raiz),
       itens: [
+        { rota: '/conta', rotulo: 'Minha conta', icone: IconeConta },
         ...(contaAdmin
           ? [
               { rota: '/usuarios', rotulo: 'Usuários', icone: IconeUsuarios },

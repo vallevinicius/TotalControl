@@ -197,6 +197,28 @@ export async function getMe(): Promise<{ usuario: Usuario; tenant: Tenant; lojas
   return requisitar('/auth/me');
 }
 
+/** Pede o link de redefinição por e-mail (a resposta é a mesma exista ou não a conta). */
+export async function esqueciSenha(email: string): Promise<void> {
+  await requisitar('/auth/esqueci-senha', { method: 'POST', body: JSON.stringify({ email }) });
+}
+
+export async function redefinirSenha(token: string, senha: string): Promise<void> {
+  await requisitar('/auth/redefinir-senha', { method: 'POST', body: JSON.stringify({ token, senha }) });
+}
+
+/** Troca a senha de quem está logado; a API devolve uma sessão nova pra este aparelho continuar entrando. */
+export async function alterarSenha(senhaAtual: string, novaSenha: string): Promise<void> {
+  const { token, refreshToken } = await requisitar<{ token: string; refreshToken: string }>('/auth/alterar-senha', {
+    method: 'POST',
+    body: JSON.stringify({ senhaAtual, novaSenha }),
+  });
+  setToken(token, refreshToken);
+}
+
+export async function atualizarPerfil(dados: { nome: string; telefone?: string }): Promise<void> {
+  await requisitar('/auth/perfil', { method: 'PUT', body: JSON.stringify(dados) });
+}
+
 export function logout(): void {
   // Avisa a API pra invalidar a renovação (sem esperar: sair não pode travar).
   const refreshToken = localStorage.getItem(CHAVE_REFRESH);
@@ -539,6 +561,16 @@ export interface NovoClientePayload {
 
 export async function createCliente(dados: NovoClientePayload): Promise<Cliente> {
   return requisitar('/clientes', { method: 'POST', body: JSON.stringify(dados) });
+}
+
+/** Na edição, campo enviado como "" apaga o valor guardado. */
+export async function updateCliente(id: string, dados: NovoClientePayload): Promise<Cliente> {
+  return requisitar(`/clientes/${id}`, { method: 'PUT', body: JSON.stringify(dados) });
+}
+
+/** Apaga os dados pessoais do cliente; as vendas dele ficam, sem vínculo. */
+export async function deleteCliente(id: string): Promise<void> {
+  await requisitar(`/clientes/${id}`, { method: 'DELETE' });
 }
 
 export async function getHistoricoCliente(id: string): Promise<HistoricoCliente> {

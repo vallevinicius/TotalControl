@@ -110,3 +110,11 @@ export const IconeLojas = (p: SVGProps<SVGSVGElement>) => (
     <path d="M5.5 12v8h13v-8M10 20v-4.5h4V20" />
   </Base>
 );
+
+export const IconeConta = (p: SVGProps<SVGSVGElement>) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="10" r="3" />
+    <path d="M6.5 18.2c1.2-2 3-3 5.5-3s4.3 1 5.5 3" />
+  </Base>
+);

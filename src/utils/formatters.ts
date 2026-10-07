@@ -43,6 +43,6 @@ const rotulosFormaPagamento: Record<string, string> = {
 };
 
 export function formatarFormaPagamento(forma?: string): string {
-  if (!forma) return '|';
+  if (!forma) return '-';
   return rotulosFormaPagamento[forma] ?? forma;
 }

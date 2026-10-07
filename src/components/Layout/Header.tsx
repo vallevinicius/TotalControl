@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTenant } from '@/contexts/TenantContext';
 import { ThemeToggle } from '@/components/Common/ThemeToggle';
 import { NotificationBell } from './NotificationBell';
@@ -48,7 +49,7 @@ export function Header({ titulo, subtitulo, aoAbrirMenu }: HeaderProps) {
           </button>
         )}
 
-        <div className="hidden items-center gap-2.5 rounded-full bg-ink-700 py-1.5 pl-1.5 pr-3.5 sm:flex">
+        <Link to="/conta" title="Minha conta" className="hidden items-center gap-2.5 rounded-full bg-ink-700 py-1.5 pl-1.5 pr-3.5 transition-colors hover:bg-ink-600 sm:flex">
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-tenant text-xs font-semibold text-tenant-foreground">
             {usuarioAtual?.nome.charAt(0) ?? '?'}
           </div>
@@ -56,7 +57,7 @@ export function Header({ titulo, subtitulo, aoAbrirMenu }: HeaderProps) {
             <p className="font-medium text-ink-100">{usuarioAtual?.nome ?? 'Convidado'}</p>
             <p className="text-ink-400">{usuarioAtual?.papel}</p>
           </div>
-        </div>
+        </Link>
 
         <button
           onClick={logout}
