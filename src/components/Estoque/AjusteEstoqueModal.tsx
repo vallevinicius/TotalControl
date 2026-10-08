@@ -20,6 +20,8 @@ export function AjusteEstoqueModal({ produto, aoFechar, aoConfirmar }: { produto
     try {
       await aoConfirmar(nova, motivo.trim());
       aoFechar();
+    } catch {
+      // O erro já foi mostrado por quem chamou; o modal fica aberto pra tentar de novo.
     } finally {
       setEnviando(false);
     }

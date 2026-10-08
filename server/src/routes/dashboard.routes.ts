@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { VENDA_VALIDA } from '../lib/vendas.js';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
@@ -15,7 +16,7 @@ dashboardRouter.get('/resumo', async (req, res) => {
   inicioDoDia.setHours(0, 0, 0, 0);
 
   const vendasDoDia = await prisma.transacao.findMany({
-    where: { tenantId, tipo: 'SAIDA', timestamp: { gte: inicioDoDia } },
+    where: { tenantId, ...VENDA_VALIDA, timestamp: { gte: inicioDoDia } },
     include: { itens: true },
   });
 
@@ -68,7 +69,7 @@ dashboardRouter.get('/serie', requerirTela(['dashboard']), async (req, res) => {
   const lista = ultimosDias(dias, fuso);
   // Folga de 1 dia pra trás: o corte exato depende do fuso; o filtro final é por dia local.
   const desde = new Date(Date.now() - (dias + 1) * 86_400_000);
-  const vendas = await prisma.transacao.findMany({ where: { tenantId, tipo: 'SAIDA', timestamp: { gte: desde } }, select: { timestamp: true, valorTotal: true } });
+  const vendas = await prisma.transacao.findMany({ where: { tenantId, ...VENDA_VALIDA, timestamp: { gte: desde } }, select: { timestamp: true, valorTotal: true } });
 
   const porDia = new Map(lista.map((d) => [d, { data: d, faturamento: 0, vendas: 0 }]));
   for (const v of vendas) {

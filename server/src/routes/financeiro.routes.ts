@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import { VENDA_VALIDA } from '../lib/vendas.js';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { requerirAcao, requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { requireFeaturePlano } from '../middleware/plano.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 
@@ -72,7 +73,7 @@ financeiroRouter.get('/resumo', async (req, res) => {
 
   const [vendas, entradasEstoque, lancamentos] = await Promise.all([
     prisma.transacao.findMany({
-      where: { tenantId, tipo: 'SAIDA', timestamp: { gte: inicio, lte: fim } },
+      where: { tenantId, ...VENDA_VALIDA, timestamp: { gte: inicio, lte: fim } },
     }),
     prisma.transacao.findMany({
       where: { tenantId, tipo: 'ENTRADA', timestamp: { gte: inicio, lte: fim } },
@@ -131,7 +132,7 @@ financeiroRouter.post('/lancamentos', async (req, res) => {
   res.status(201).json(serializarLancamento(lancamento));
 });
 
-financeiroRouter.delete('/lancamentos/:id', async (req, res) => {
+financeiroRouter.delete('/lancamentos/:id', requerirAcao('registros.excluir'), async (req, res) => {
   const { tenantId, id: usuarioId } = req.usuario!;
   const lancamento = await prisma.lancamentoFinanceiro.findFirst({ where: { id: req.params.id, tenantId } });
   if (!lancamento) return res.status(404).json({ erro: 'Lançamento não encontrado.' });
@@ -274,7 +275,7 @@ financeiroRouter.get('/dre', async (req, res) => {
 
   const [vendas, lancamentos] = await Promise.all([
     prisma.transacao.findMany({
-      where: { tenantId, tipo: 'SAIDA', timestamp: { gte: inicio, lte: fim } },
+      where: { tenantId, ...VENDA_VALIDA, timestamp: { gte: inicio, lte: fim } },
       include: { itens: { select: { quantidade: true, produto: { select: { precoCusto: true } } } } },
     }),
     prisma.lancamentoFinanceiro.findMany({ where: { tenantId, data: { gte: inicio, lte: fim }, ...REALIZADO } }),

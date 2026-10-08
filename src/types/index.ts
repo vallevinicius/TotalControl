@@ -89,6 +89,15 @@ export interface Tenant {
 /** Usuário operador do sistema, sempre vinculado a um tenant. */
 export type PapelUsuario = 'ADMIN' | 'GERENTE' | 'OPERADOR_CAIXA';
 
+/** Ações finas que um login pode ou não fazer (ver server/src/config/acoes.ts). */
+export type AcaoUsuario =
+  | 'vendas.alterarPreco'
+  | 'vendas.descontoAlto'
+  | 'vendas.cancelar'
+  | 'caixa.sangria'
+  | 'estoque.ajustar'
+  | 'registros.excluir';
+
 /** Chave de cada tela que pode ter acesso concedido/negado por usuário. */
 export type TelaComPermissao =
   | 'dashboard'
@@ -112,6 +121,12 @@ export interface Usuario {
    * caem nesse caso, por compatibilidade).
    */
   permissoes?: TelaComPermissao[];
+  /** Em /auth/me: as ações que a pessoa pode fazer hoje. Em /usuarios: só o que foi personalizado
+   * (ausente = padrão do papel); use `acoesEfetivas` para o que vale. */
+  acoes?: AcaoUsuario[];
+  acoesEfetivas?: AcaoUsuario[];
+  /** Maior desconto (%) que a pessoa pode dar no PDV (vem do /auth/me). */
+  descontoMaximo?: number;
   /** Conta principal da loja (criada no cadastro) — nunca pode ser desativada. */
   raiz?: boolean;
   ativo: boolean;
@@ -147,6 +162,8 @@ export interface Produto {
   tenantId: string;
   nome: string;
   sku: string;
+  /** EAN/UPC lido pelo leitor no PDV. */
+  codigoBarras?: string;
   categoriaId: string;
   precoCusto: number;
   precoVenda: number;
@@ -184,6 +201,10 @@ export interface Transacao {
   /** Número de parcelas — só relevante para CARTAO_CREDITO. */
   parcelas: number;
   formaPagamento?: FormaPagamento; // aplicável a SAIDA (venda)
+  /** Formas usadas na venda (mais de uma quando foi dividida). */
+  pagamentos?: Array<{ forma: FormaPagamento; valor: number; parcelas: number }>;
+  cancelada?: boolean;
+  motivoCancelamento?: string;
   usuarioId: string;
   caixaId?: string;
   vendedorId?: string;
@@ -203,10 +224,24 @@ export interface Vendedor {
 export type StatusCaixa = 'ABERTO' | 'FECHADO';
 
 /** Resumo das vendas feitas dentro de um turno de caixa. */
+export interface MovimentoCaixa {
+  id: string;
+  tipo: 'SANGRIA' | 'SUPRIMENTO';
+  valor: number;
+  motivo: string;
+  criadoEm: string;
+}
+
 export interface ResumoCaixa {
+  /** Só vendas válidas: as canceladas não entram. */
   totalVendido: number;
   quantidadeVendas: number;
   totaisPorFormaPagamento?: Record<string, number>;
+  totalSangrias?: number;
+  totalSuprimentos?: number;
+  /** Dinheiro que deveria estar na gaveta: abertura + vendas em dinheiro + suprimentos - sangrias. */
+  valorEsperadoEmDinheiro?: number;
+  movimentos?: MovimentoCaixa[];
 }
 
 /** Turno de caixa — abre com um valor inicial, acumula vendas, fecha com
@@ -223,6 +258,8 @@ export interface Caixa {
   fechadoEm?: string;
   fechadoPorNome?: string;
   resumo: ResumoCaixa;
+  /** Só na resposta do fechamento: contado menos esperado (sobra +, falta -). */
+  diferencaNoFechamento?: number;
 }
 
 /** Payload usado para registrar uma nova venda a partir do PDV. */
@@ -285,6 +322,9 @@ export interface VendaResumo {
   desconto?: number;
   taxas?: number;
   parcelas?: number;
+  pagamentos?: Array<{ forma: FormaPagamento; valor: number; parcelas: number }>;
+  cancelada?: boolean;
+  motivoCancelamento?: string;
   itens?: Array<{ nome: string; quantidade: number; valorUnitario: number; subtotal: number }>;
 }
 

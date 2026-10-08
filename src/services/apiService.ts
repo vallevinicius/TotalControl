@@ -26,6 +26,7 @@ import type {
   AcessoDaLoja,
   UsuarioDaEmpresa,
   AssinaturaResumo,
+  AcaoUsuario,
   CobrancaAssinatura,
   MovimentacaoEstoque,
   ResumoContas,
@@ -571,6 +572,7 @@ export async function importarProdutos(produtos: ProdutoParaImportar[]): Promise
 export interface NovoProdutoPayload {
   nome: string;
   sku: string;
+  codigoBarras?: string;
   categoriaId: string;
   precoCusto: number;
   precoVenda: number;
@@ -662,9 +664,11 @@ export async function getHistoricoCliente(id: string): Promise<HistoricoCliente>
 export interface NovaVendaPayload {
   itens: Array<{ productId: string; quantidade: number; precoUnitario?: number }>;
   desconto?: number;
-  taxas?: number;
+  /** Uma forma só... */
+  formaPagamento?: FormaPagamento;
   parcelas?: number;
-  formaPagamento: FormaPagamento;
+  /** ...ou várias (venda dividida). A taxa do cartão é calculada pelo servidor. */
+  pagamentos?: Array<{ forma: FormaPagamento; valor: number; parcelas?: number }>;
   clienteId?: string;
   vendedorId?: string;
 }
@@ -675,6 +679,26 @@ export async function registerSale(payload: NovaVendaPayload): Promise<Transacao
 
 export async function getVendas(): Promise<Transacao[]> {
   return requisitar('/vendas');
+}
+
+/** Cancela uma venda do caixa aberto (exige a ação "cancelar vendas"): devolve o estoque e a venda fica registrada como cancelada. */
+export async function cancelarVenda(id: string, motivo: string): Promise<void> {
+  await requisitar(`/vendas/${id}/cancelar`, { method: 'POST', body: JSON.stringify({ motivo }) });
+}
+
+/** Sangria (tira dinheiro da gaveta) ou suprimento (coloca troco). Exige a ação "sangria e suprimento". */
+export async function movimentarCaixa(caixaId: string, dados: { tipo: 'SANGRIA' | 'SUPRIMENTO'; valor: number; motivo: string }): Promise<void> {
+  await requisitar(`/caixa/${caixaId}/movimentos`, { method: 'POST', body: JSON.stringify(dados) });
+}
+
+/** Leitor de código de barras: acha o produto ativo pelo código de barras ou pelo SKU (null se não houver). */
+export async function getProdutoPorCodigo(codigo: string): Promise<Produto | null> {
+  try {
+    return await requisitar(`/produtos/codigo/${encodeURIComponent(codigo)}`);
+  } catch (e) {
+    if (e instanceof ErroApi && e.status === 404) return null;
+    throw e;
+  }
 }
 
 /** Desfaz a última venda do turno de caixa aberto (até 5 min depois dela). */
@@ -827,6 +851,8 @@ export interface NovoUsuarioPayload {
   convidarPorEmail?: boolean;
   papel: 'ADMIN' | 'GERENTE' | 'OPERADOR_CAIXA';
   permissoes: TelaComPermissao[];
+  /** Só quando difere do padrão do papel. */
+  acoes?: AcaoUsuario[];
 }
 
 /** Gera uma senha temporária para um funcionário que perdeu o acesso (aparece uma única vez). */
@@ -847,6 +873,8 @@ export interface AtualizarAcessoPayload {
   permissoes?: TelaComPermissao[];
   /** Só a conta principal da loja pode mudar o papel de outro login. */
   papel?: 'ADMIN' | 'GERENTE' | 'OPERADOR_CAIXA';
+  /** Lista = exatamente essas ações; null = voltar ao padrão do papel. */
+  acoes?: AcaoUsuario[] | null;
 }
 
 export async function atualizarAcessoUsuario(id: string, dados: AtualizarAcessoPayload): Promise<Usuario> {

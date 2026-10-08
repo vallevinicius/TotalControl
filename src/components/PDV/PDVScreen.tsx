@@ -14,11 +14,21 @@ import {
   getHistoricoCaixas,
   getVendasDoCaixa,
   desfazerUltimaVenda,
+  cancelarVenda,
+  movimentarCaixa,
+  getProdutoPorCodigo,
 } from '@/services/apiService';
 import { formatarMoeda, formatarHora, formatarFormaPagamento } from '@/utils/formatters';
 import { AbrirCaixaCard } from './AbrirCaixaCard';
 import { FecharCaixaModal } from './FecharCaixaModal';
 import { ComprovanteModal, type DadosComprovante } from './ComprovanteModal';
+import { PagamentoPanel } from './PagamentoPanel';
+import { CancelarVendaModal } from './CancelarVendaModal';
+import { MovimentoCaixaModal } from './MovimentoCaixaModal';
+import { VendasEmEsperaModal } from './VendasEmEsperaModal';
+import { PAGAMENTO_INICIAL, calcularPagamento, type EstadoPagamento } from './pagamento';
+import { guardarEmEspera, listarEmEspera, removerDaEspera, type VendaEmEspera } from './emEspera';
+import { podeFazer } from '@/utils/acoes';
 import type { Caixa, Cliente, FormaPagamento, Produto, Vendedor, VendaResumo } from '@/types';
 
 interface ItemCarrinho {
@@ -26,16 +36,6 @@ interface ItemCarrinho {
   quantidade: number;
   precoUnitario: number;
 }
-
-const formasPagamento: Array<{ valor: FormaPagamento; rotulo: string }> = [
-  { valor: 'PIX', rotulo: 'Pix' },
-  { valor: 'CARTAO_CREDITO', rotulo: 'Cartão de Crédito' },
-  { valor: 'CARTAO_DEBITO', rotulo: 'Cartão de Débito' },
-  { valor: 'DINHEIRO', rotulo: 'Dinheiro' },
-];
-
-const TAXA_CARTAO_CREDITO = 0.05;
-const PARCELAS_DISPONIVEIS = [1, 2, 3];
 
 // Classe utilitária pra tirar as setinhas nativas do <input type="number">
 // em todos os navegadores — é isso que deixava o campo de desconto feio.
@@ -60,8 +60,10 @@ export function PDVScreen() {
   const { tenant, usuarioAtual } = useTenant();
   // Mesma política que o servidor aplica (server/src/config/planos.ts): a tela só
   // evita o erro, quem garante a regra é a API.
-  const podeAlterarPreco = usuarioAtual?.papel !== 'OPERADOR_CAIXA';
-  const descontoMaximo = usuarioAtual?.papel === 'OPERADOR_CAIXA' ? 5 : usuarioAtual?.papel === 'GERENTE' ? 20 : 100;
+  const podeAlterarPreco = podeFazer(usuarioAtual, 'vendas.alterarPreco');
+  const descontoMaximo = usuarioAtual?.descontoMaximo ?? 5;
+  const podeCancelar = podeFazer(usuarioAtual, 'vendas.cancelar');
+  const podeSangria = podeFazer(usuarioAtual, 'caixa.sangria');
   const toast = useToast();
 
   const [caixa, setCaixa] = useState<Caixa | null>(null);
@@ -77,15 +79,19 @@ export function PDVScreen() {
   const [termoBusca, setTermoBusca] = useState('');
   const [resultados, setResultados] = useState<Produto[]>([]);
   const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
-  const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>('PIX');
+  const [pagamento, setPagamento] = useState<EstadoPagamento>(PAGAMENTO_INICIAL);
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0);
-  const [parcelas, setParcelas] = useState<number>(1);
+  const [vendaParaCancelar, setVendaParaCancelar] = useState<VendaResumo | null>(null);
+  const [movimentoModal, setMovimentoModal] = useState<'SANGRIA' | 'SUPRIMENTO' | null>(null);
+  const [emEspera, setEmEspera] = useState<VendaEmEspera[]>([]);
+  const [mostrarEspera, setMostrarEspera] = useState(false);
   const [processando, setProcessando] = useState(false);
   // Dinheiro: quanto o cliente entregou (pra calcular o troco). Vazio = não informado.
   const [valorRecebido, setValorRecebido] = useState<number>(0);
   const [comprovante, setComprovante] = useState<DadosComprovante | null>(null);
 
   const [termoCliente, setTermoCliente] = useState('');
+  const [listaClientesAberta, setListaClientesAberta] = useState(false);
   const [resultadosClientes, setResultadosClientes] = useState<Cliente[]>([]);
   const [clienteSelecionado, setClienteSelecionado] = useState<Cliente | null>(null);
 
@@ -132,6 +138,10 @@ export function PDVScreen() {
   }, []);
 
   useEffect(() => {
+    if (tenant && caixa) setEmEspera(listarEmEspera(tenant.id, caixa.id));
+  }, [tenant, caixa]);
+
+  useEffect(() => {
     const termo = termoBusca.trim();
     if (termo.length === 0) {
       setResultados([]);
@@ -147,19 +157,16 @@ export function PDVScreen() {
   }, [termoBusca]);
 
   useEffect(() => {
+    if (!listaClientesAberta) return;
     const termo = termoCliente.trim();
-    if (termo.length === 0) {
-      setResultadosClientes([]);
-      return;
-    }
     let cancelado = false;
-    getClientes(termo).then((resultado) => {
+    getClientes(termo || undefined).then((resultado) => {
       if (!cancelado) setResultadosClientes(resultado.itens);
     });
     return () => {
       cancelado = true;
     };
-  }, [termoCliente]);
+  }, [termoCliente, listaClientesAberta]);
 
   async function handleAbrirCaixa(valorAbertura: number, senha?: string) {
     try {
@@ -221,17 +228,11 @@ export function PDVScreen() {
     setTermoBusca('');
     setResultados([]);
     setDescontoPercentual(0);
-    setParcelas(1);
+    setPagamento(PAGAMENTO_INICIAL);
     setValorRecebido(0);
     setClienteSelecionado(null);
     setTermoCliente('');
     setMostrarNovaVenda(false);
-  }
-
-  function handleMudarFormaPagamento(forma: FormaPagamento) {
-    setFormaPagamento(forma);
-    if (forma !== 'CARTAO_CREDITO') setParcelas(1);
-    if (forma !== 'DINHEIRO') setValorRecebido(0);
   }
 
   const subtotal = useMemo(
@@ -240,19 +241,21 @@ export function PDVScreen() {
   );
   const valorDesconto = Number(((subtotal * descontoPercentual) / 100).toFixed(2));
   const subtotalComDesconto = Math.max(0, subtotal - valorDesconto);
-  const ehCartaoCredito = formaPagamento === 'CARTAO_CREDITO';
-  const valorTaxaCartao = ehCartaoCredito ? Number((subtotalComDesconto * TAXA_CARTAO_CREDITO).toFixed(2)) : 0;
-  const totalFinal = subtotalComDesconto + valorTaxaCartao;
-  const ehDinheiro = formaPagamento === 'DINHEIRO';
-  const recebidoInformado = ehDinheiro && valorRecebido > 0;
-  const troco = recebidoInformado ? Number((valorRecebido - totalFinal).toFixed(2)) : 0;
-  // Se informou o valor recebido, ele precisa cobrir o total (senão falta dinheiro).
+  const resultadoPagamento = calcularPagamento(pagamento, subtotalComDesconto);
+  const valorTaxaCartao = resultadoPagamento.taxa;
+  const totalFinal = resultadoPagamento.total;
+  // Troco: só sobre a parte paga em dinheiro (na venda dividida, é a linha "Dinheiro").
+  const valorEmDinheiro = resultadoPagamento.valorEmDinheiro;
+  const recebidoInformado = valorEmDinheiro > 0 && valorRecebido > 0;
+  const troco = recebidoInformado ? Number((valorRecebido - valorEmDinheiro).toFixed(2)) : 0;
+  // Se informou o valor recebido, ele precisa cobrir a parte em dinheiro.
   const recebidoInsuficiente = recebidoInformado && troco < 0;
+  const pagamentoInvalido = !resultadoPagamento.valido;
 
   const vendedorObrigatorioFaltando = vendedores.length > 0 && !vendedorId;
 
   async function finalizarVenda() {
-    if (carrinho.length === 0 || vendedorObrigatorioFaltando || recebidoInsuficiente) return;
+    if (carrinho.length === 0 || vendedorObrigatorioFaltando || recebidoInsuficiente || pagamentoInvalido) return;
     setProcessando(true);
     try {
       const venda = await registerSale({
@@ -262,9 +265,10 @@ export function PDVScreen() {
           precoUnitario: i.precoUnitario,
         })),
         desconto: valorDesconto,
-        taxas: valorTaxaCartao,
-        parcelas: ehCartaoCredito ? parcelas : 1,
-        formaPagamento,
+        // A taxa do cartão não vai: o servidor calcula.
+        ...(pagamento.dividido
+          ? { pagamentos: resultadoPagamento.pagamentos }
+          : { formaPagamento: pagamento.forma, parcelas: pagamento.forma === 'CARTAO_CREDITO' ? pagamento.parcelas : 1 }),
         clienteId: clienteSelecionado?.id,
         vendedorId: vendedorId || undefined,
       });
@@ -279,6 +283,7 @@ export function PDVScreen() {
         total: venda.valorTotal,
         formaPagamento: venda.formaPagamento,
         parcelas: venda.parcelas,
+        pagamentos: venda.pagamentos,
         valorRecebido: recebidoInformado ? valorRecebido : undefined,
         troco: recebidoInformado ? troco : undefined,
         clienteNome: clienteSelecionado?.nome,
@@ -287,7 +292,7 @@ export function PDVScreen() {
       });
       setCarrinho([]);
       setDescontoPercentual(0);
-      setParcelas(1);
+      setPagamento(PAGAMENTO_INICIAL);
       setValorRecebido(0);
       setClienteSelecionado(null);
       setTermoCliente('');
@@ -297,6 +302,86 @@ export function PDVScreen() {
       toast.erro(erro instanceof Error ? erro.message : 'Erro ao finalizar venda.');
     } finally {
       setProcessando(false);
+    }
+  }
+
+  async function confirmarCancelamento(motivo: string) {
+    if (!vendaParaCancelar) return;
+    try {
+      await cancelarVenda(vendaParaCancelar.id, motivo);
+      toast.sucesso('Venda cancelada, estoque devolvido.');
+      await carregarCaixa();
+    } catch (erro) {
+      toast.erro(erro instanceof Error ? erro.message : 'Erro ao cancelar a venda.');
+      throw erro;
+    }
+  }
+
+  async function confirmarMovimento(tipo: 'SANGRIA' | 'SUPRIMENTO', valor: number, motivo: string) {
+    if (!caixa) return;
+    try {
+      await movimentarCaixa(caixa.id, { tipo, valor, motivo });
+      toast.sucesso(tipo === 'SANGRIA' ? 'Sangria registrada.' : 'Suprimento registrado.');
+      await carregarCaixa();
+    } catch (erro) {
+      toast.erro(erro instanceof Error ? erro.message : 'Erro ao registrar.');
+      throw erro;
+    }
+  }
+
+  function limparVendaAtual() {
+    setCarrinho([]);
+    setDescontoPercentual(0);
+    setPagamento(PAGAMENTO_INICIAL);
+    setValorRecebido(0);
+    setClienteSelecionado(null);
+    setTermoCliente('');
+    setTermoBusca('');
+    setResultados([]);
+  }
+
+  function colocarEmEspera() {
+    if (!tenant || !caixa || carrinho.length === 0) return;
+    guardarEmEspera(tenant.id, {
+      caixaId: caixa.id,
+      rotulo: clienteSelecionado?.nome ?? `Venda das ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`,
+      itens: carrinho,
+      cliente: clienteSelecionado,
+      vendedorId,
+      descontoPercentual,
+    });
+    setEmEspera(listarEmEspera(tenant.id, caixa.id));
+    limparVendaAtual();
+    toast.sucesso('Venda guardada em espera. Já pode atender o próximo cliente.');
+  }
+
+  function retomarDaEspera(venda: VendaEmEspera) {
+    if (!tenant || !caixa) return;
+    if (carrinho.length > 0) {
+      toast.erro('Finalize ou guarde a venda atual em espera antes de retomar outra.');
+      return;
+    }
+    setCarrinho(venda.itens);
+    setClienteSelecionado(venda.cliente);
+    setVendedorId(venda.vendedorId);
+    setDescontoPercentual(Math.min(venda.descontoPercentual, descontoMaximo));
+    removerDaEspera(tenant.id, venda.id);
+    setEmEspera(listarEmEspera(tenant.id, caixa.id));
+    setMostrarEspera(false);
+    setMostrarNovaVenda(true);
+  }
+
+  /** Leitor de código de barras (digita o código e dá Enter): adiciona o produto direto ao carrinho. */
+  async function aoDarEnterNaBusca() {
+    const termo = termoBusca.trim();
+    if (!termo) return;
+    try {
+      const produto = await getProdutoPorCodigo(termo);
+      if (produto) return adicionarAoCarrinho(produto);
+      if (resultados.length === 1) return adicionarAoCarrinho(resultados[0]);
+      toast.erro(`Nenhum produto com o código "${termo}".`);
+    } catch (erro) {
+      toast.erro(erro instanceof Error ? erro.message : 'Erro ao ler o código.');
     }
   }
 
@@ -364,7 +449,7 @@ export function PDVScreen() {
         mostrarNovaVenda ? 'Busque um produto, monte o carrinho e finalize a venda' : 'Vendas feitas neste turno de caixa'
       }
     >
-      <div className="mb-4 flex items-center justify-between rounded-xl border border-ink-700 bg-ink-800 px-5 py-3">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-700 bg-ink-800 px-5 py-3">
         <div className="text-sm">
           <span className="font-medium text-ink-100">Caixa aberto</span>
           <span className="text-ink-400">
@@ -373,10 +458,20 @@ export function PDVScreen() {
             {caixa.abertoPorNome}
           </span>
         </div>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-3 text-sm sm:gap-4">
           <span className="text-ink-400">
             {caixa.resumo.quantidadeVendas} venda(s) · <span className="font-mono text-ink-100">{formatarMoeda(caixa.resumo.totalVendido, tenant)}</span>
           </span>
+          {podeSangria && (
+            <>
+              <button onClick={() => setMovimentoModal('SANGRIA')} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                Sangria
+              </button>
+              <button onClick={() => setMovimentoModal('SUPRIMENTO')} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                Suprimento
+              </button>
+            </>
+          )}
           <button
             onClick={() => setMostrarFecharCaixa(true)}
             className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400"
@@ -393,8 +488,13 @@ export function PDVScreen() {
               <p className="text-sm font-medium text-ink-200">Vendas de hoje</p>
               <p className="text-xs text-ink-500">{vendasDoCaixa.length} venda(s) neste turno</p>
             </div>
-            <div className="flex gap-2">
-              {vendasDoCaixa.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {emEspera.length > 0 && (
+                <button onClick={() => setMostrarEspera(true)} className="rounded-lg border border-amber-500/40 px-4 py-2 text-sm font-medium text-amber-400 hover:bg-amber-500/10">
+                  Em espera ({emEspera.length})
+                </button>
+              )}
+              {vendasDoCaixa.some((v) => !v.cancelada) && (
                 <button
                   onClick={handleDesfazerUltimaVenda}
                   disabled={desfazendo}
@@ -430,21 +530,36 @@ export function PDVScreen() {
                     <th className="px-5 py-3 font-medium">Forma de pagamento</th>
                     <th className="px-5 py-3 font-medium text-right">Itens</th>
                     <th className="px-5 py-3 font-medium text-right">Total</th>
-                    <th className="px-5 py-3 font-medium text-right">Comprovante</th>
+                    <th className="px-5 py-3 font-medium text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-700 bg-ink-800/40">
                   {vendasDoCaixa.map((venda) => (
-                    <tr key={venda.id} className="transition-colors hover:bg-ink-800">
-                      <td className="px-5 py-3.5 text-ink-300">{formatarHora(venda.timestamp, tenant)}</td>
+                    <tr key={venda.id} className={['transition-colors hover:bg-ink-800', venda.cancelada ? 'opacity-60' : ''].join(' ')}>
+                      <td className="px-5 py-3.5 text-ink-300">
+                        {formatarHora(venda.timestamp, tenant)}
+                        {venda.cancelada && (
+                          <span title={venda.motivoCancelamento} className="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-400">
+                            Cancelada
+                          </span>
+                        )}
+                      </td>
                       <td className="px-5 py-3.5 text-ink-300">{venda.clienteNome ?? '-'}</td>
                       <td className="px-5 py-3.5 text-ink-300">{venda.vendedorNome ?? '-'}</td>
-                      <td className="px-5 py-3.5 text-ink-300">{formatarFormaPagamento(venda.formaPagamento)}</td>
+                      <td className="px-5 py-3.5 text-ink-300">
+                        {venda.pagamentos && venda.pagamentos.length > 1 ? `Dividido (${venda.pagamentos.map((p) => formatarFormaPagamento(p.forma)).join(' + ')})` : formatarFormaPagamento(venda.formaPagamento)}
+                      </td>
                       <td className="px-5 py-3.5 text-right text-ink-300">{venda.quantidadeItens}</td>
-                      <td className="px-5 py-3.5 text-right font-mono text-ink-100">
+                      <td className={['px-5 py-3.5 text-right font-mono text-ink-100', venda.cancelada ? 'line-through' : ''].join(' ')}>
                         {formatarMoeda(venda.valorTotal, tenant)}
                       </td>
                       <td className="px-5 py-3.5 text-right">
+                        <div className="flex justify-end gap-2">
+                        {podeCancelar && !venda.cancelada && (
+                          <button onClick={() => setVendaParaCancelar(venda)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400">
+                            Cancelar
+                          </button>
+                        )}
                         {venda.itens && (
                           <button
                             onClick={() =>
@@ -457,6 +572,7 @@ export function PDVScreen() {
                                 total: venda.valorTotal,
                                 formaPagamento: venda.formaPagamento,
                                 parcelas: venda.parcelas,
+                                pagamentos: venda.pagamentos,
                                 clienteNome: venda.clienteNome,
                                 clienteTelefone: venda.clienteTelefone,
                                 vendedorNome: venda.vendedorNome,
@@ -464,9 +580,10 @@ export function PDVScreen() {
                             }
                             className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
                           >
-                            Ver
+                            Comprovante
                           </button>
                         )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -484,7 +601,7 @@ export function PDVScreen() {
             ← Voltar para as vendas do turno
           </button>
 
-          <div className="grid h-[calc(100%-4rem)] grid-cols-[1fr_380px] gap-6">
+          <div className="grid gap-6 lg:h-[calc(100%-4rem)] lg:grid-cols-[1fr_380px]">
         {/* Coluna de busca + resultados */}
         <section className="flex flex-col gap-4">
           <div className="relative">
@@ -493,7 +610,13 @@ export function PDVScreen() {
               autoFocus
               value={termoBusca}
               onChange={(e) => setTermoBusca(e.target.value)}
-              placeholder="Buscar produto por nome ou SKU… (F2)"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  aoDarEnterNaBusca();
+                }
+              }}
+              placeholder="Nome, SKU ou código de barras… (F2)"
               className="w-full rounded-xl border border-ink-600 bg-ink-800 px-4 py-3.5 text-base text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none focus:ring-2 focus:ring-tenant/30"
             />
           </div>
@@ -608,19 +731,31 @@ export function PDVScreen() {
               <input
                 value={termoCliente}
                 onChange={(e) => setTermoCliente(e.target.value)}
-                placeholder="Buscar cliente…"
-                className="w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none"
+                onFocus={() => setListaClientesAberta(true)}
+                onBlur={() => setListaClientesAberta(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && resultadosClientes.length > 0) {
+                    e.preventDefault();
+                    setClienteSelecionado(resultadosClientes[0]);
+                    setTermoCliente('');
+                    setListaClientesAberta(false);
+                  }
+                  if (e.key === 'Escape') setListaClientesAberta(false);
+                }}
+                placeholder="Escolha ou digite o nome do cliente…"
+                className="w-full rounded-lg border border-ink-600 bg-ink-900 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none"
               />
             )}
-            {!clienteSelecionado && resultadosClientes.length > 0 && (
-              <ul className="absolute z-10 mt-1 w-full divide-y divide-ink-700 rounded-lg border border-ink-700 bg-ink-800 shadow-lg">
+            {!clienteSelecionado && listaClientesAberta && resultadosClientes.length > 0 && (
+              <ul className="absolute z-10 mt-1 max-h-56 w-full divide-y overflow-y-auto divide-ink-700 rounded-lg border border-ink-700 bg-ink-800 shadow-lg">
                 {resultadosClientes.map((cliente) => (
                   <li key={cliente.id}>
                     <button
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         setClienteSelecionado(cliente);
                         setTermoCliente('');
-                        setResultadosClientes([]);
+                        setListaClientesAberta(false);
                       }}
                       className="w-full px-3 py-2 text-left text-sm text-ink-100 hover:bg-ink-700"
                     >
@@ -669,7 +804,7 @@ export function PDVScreen() {
                 >
                   −
                 </button>
-                <div className="flex items-center gap-0.5 rounded-md border border-ink-600 bg-ink-700 px-2 py-1">
+                <div className="flex items-center gap-0.5 rounded-md border border-ink-600 bg-ink-900 px-2 py-1">
                   <input
                     type="number"
                     min={0}
@@ -698,9 +833,9 @@ export function PDVScreen() {
               </div>
             )}
 
-            {ehCartaoCredito && valorTaxaCartao > 0 && (
+            {valorTaxaCartao > 0 && (
               <div className="flex justify-between text-ink-400">
-                <span>Taxa do cartão (5%)</span>
+                <span>Juros do cartão (acima de 3x)</span>
                 <span className="font-mono">+{formatarMoeda(valorTaxaCartao, tenant)}</span>
               </div>
             )}
@@ -712,57 +847,11 @@ export function PDVScreen() {
             <span className="text-sm text-ink-300">Total</span>
             <span className="font-display text-3xl font-semibold text-tenant">{formatarMoeda(totalFinal, tenant)}</span>
           </div>
-          {ehCartaoCredito && parcelas > 1 && (
-            <p className="mt-1 text-right text-xs text-ink-400">
-              {parcelas}x de {formatarMoeda(totalFinal / parcelas, tenant)}
-            </p>
-          )}
+          <PagamentoPanel estado={pagamento} aoMudar={setPagamento} subtotalComDesconto={subtotalComDesconto} resultado={resultadoPagamento} />
 
-          <div className="mt-6">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">Forma de pagamento</p>
-            <div className="grid grid-cols-2 gap-2">
-              {formasPagamento.map((forma) => (
-                <button
-                  key={forma.valor}
-                  onClick={() => handleMudarFormaPagamento(forma.valor)}
-                  className={[
-                    'rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
-                    formaPagamento === forma.valor
-                      ? 'border-tenant bg-tenant-soft text-tenant'
-                      : 'border-ink-600 text-ink-300 hover:border-ink-500',
-                  ].join(' ')}
-                >
-                  {forma.rotulo}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {ehCartaoCredito && (
+          {valorEmDinheiro > 0 && (
             <div className="mt-4">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">Parcelas</p>
-              <div className="grid grid-cols-3 gap-2">
-                {PARCELAS_DISPONIVEIS.map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setParcelas(n)}
-                    className={[
-                      'rounded-lg border px-2 py-2 text-xs font-medium transition-colors',
-                      parcelas === n
-                        ? 'border-tenant bg-tenant-soft text-tenant'
-                        : 'border-ink-600 text-ink-300 hover:border-ink-500',
-                    ].join(' ')}
-                  >
-                    {n}x
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {ehDinheiro && (
-            <div className="mt-4">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">Valor recebido</p>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">Valor recebido em dinheiro</p>
               <div className="flex items-center rounded-lg border border-ink-600 bg-ink-700 px-3 py-2">
                 <span className="text-ink-400">R$</span>
                 <input
@@ -772,13 +861,13 @@ export function PDVScreen() {
                   value={valorRecebido === 0 ? '' : valorRecebido}
                   onChange={(e) => setValorRecebido(Number(e.target.value) || 0)}
                   aria-label="Valor recebido em dinheiro"
-                  placeholder={totalFinal.toFixed(2)}
+                  placeholder={valorEmDinheiro.toFixed(2)}
                   className={['ml-2 w-full bg-transparent text-right font-mono text-ink-100 outline-none', SEM_SPINNER_NATIVO].join(' ')}
                 />
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {[totalFinal, 20, 50, 100, 200]
-                  .filter((v, i) => i === 0 || v > totalFinal)
+                {[valorEmDinheiro, 20, 50, 100, 200]
+                  .filter((v, i) => i === 0 || v > valorEmDinheiro)
                   .map((v, i) => (
                     <button
                       key={i}
@@ -800,18 +889,18 @@ export function PDVScreen() {
 
           <button
             onClick={finalizarVenda}
-            disabled={carrinho.length === 0 || processando || vendedorObrigatorioFaltando || recebidoInsuficiente}
+            disabled={carrinho.length === 0 || processando || vendedorObrigatorioFaltando || recebidoInsuficiente || pagamentoInvalido}
             className="mt-auto pt-6 text-center"
           >
             <span
               className={[
                 'block w-full rounded-xl bg-tenant py-3.5 text-sm font-semibold text-tenant-foreground transition-opacity hover:opacity-90',
-                (carrinho.length === 0 || processando || vendedorObrigatorioFaltando || recebidoInsuficiente) && 'cursor-not-allowed opacity-40',
+                (carrinho.length === 0 || processando || vendedorObrigatorioFaltando || recebidoInsuficiente || pagamentoInvalido) && 'cursor-not-allowed opacity-40',
               ]
                 .filter(Boolean)
                 .join(' ')}
             >
-              {processando ? 'Finalizando…' : vendedorObrigatorioFaltando ? 'Selecione um vendedor' : recebidoInsuficiente ? 'Valor recebido insuficiente' : 'Finalizar venda (F4)'}
+              {processando ? 'Finalizando…' : vendedorObrigatorioFaltando ? 'Selecione um vendedor' : recebidoInsuficiente ? 'Valor recebido insuficiente' : pagamentoInvalido ? 'Complete o pagamento' : 'Finalizar venda (F4)'}
             </span>
           </button>
         </aside>

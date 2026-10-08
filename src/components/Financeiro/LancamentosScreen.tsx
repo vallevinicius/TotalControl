@@ -85,7 +85,7 @@ export function LancamentosScreen() {
       </FiltroPeriodo>
 
       {mostrarFormulario && (
-        <form onSubmit={handleSubmit} className="mb-6 grid grid-cols-5 gap-4 rounded-xl border border-ink-700 bg-ink-800 p-6">
+        <form onSubmit={handleSubmit} className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5 rounded-xl border border-ink-700 bg-ink-800 p-6">
           <div className="text-sm text-ink-300">
             Tipo
             <div className="mt-1 flex gap-2">

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
@@ -10,6 +11,7 @@ import { registrarAuditoria } from '../lib/auditoria.js';
 import { mensagemDeValidacao, senhaForte } from '../lib/senha.js';
 import { emailConvite, enviarEmail } from '../lib/email.js';
 import { revogarTodasAsSessoes } from '../lib/sessao.js';
+import { acoesEfetivas, TODAS_AS_ACOES } from '../config/acoes.js';
 
 type PapelUsuario = 'ADMIN' | 'GERENTE' | 'OPERADOR_CAIXA';
 
@@ -18,6 +20,7 @@ usuariosRouter.use(requireAuth, requerirAdmin);
 
 const TELAS_VALIDAS = ['dashboard', 'pdv', 'estoque', 'financeiro', 'clientes', 'vendedores', 'relatorios'] as const;
 const permissoesSchema = z.array(z.enum(TELAS_VALIDAS));
+const acoesSchema = z.array(z.enum(TODAS_AS_ACOES as [string, ...string[]]));
 
 function serializarUsuario(u: {
   id: string;
@@ -26,6 +29,7 @@ function serializarUsuario(u: {
   email: string;
   papel: string;
   permissoes: unknown;
+  acoes?: unknown;
   raiz: boolean;
   ativo: boolean;
   criadoEm: Date;
@@ -37,6 +41,9 @@ function serializarUsuario(u: {
     email: u.email,
     papel: u.papel,
     permissoes: (u.permissoes as string[] | null) ?? undefined,
+    // `acoes` é o que foi personalizado (ausente = padrão do papel); `acoesEfetivas` é o que vale hoje.
+    acoes: Array.isArray(u.acoes) ? (u.acoes as string[]) : undefined,
+    acoesEfetivas: acoesEfetivas(u),
     raiz: u.raiz,
     ativo: u.ativo,
     criadoEm: u.criadoEm.toISOString(),
@@ -57,6 +64,7 @@ const novoUsuarioSchema = z.object({
   convidarPorEmail: z.boolean().optional(),
   papel: z.enum(['ADMIN', 'GERENTE', 'OPERADOR_CAIXA']),
   permissoes: permissoesSchema.optional(),
+  acoes: acoesSchema.optional(),
 }).superRefine((d, ctx) => {
   if (!d.convidarPorEmail && !d.senha) ctx.addIssue({ code: 'custom', path: ['senha'], message: 'Informe a senha do novo login.' });
 });
@@ -94,6 +102,7 @@ usuariosRouter.post('/', async (req, res) => {
       senhaHash,
       papel: parse.data.papel,
       permissoes: parse.data.permissoes ?? [],
+      acoes: parse.data.acoes,
     },
   });
 
@@ -151,6 +160,8 @@ usuariosRouter.put('/:id/ativo', async (req, res) => {
 
 const atualizarAcessoSchema = z.object({
   permissoes: permissoesSchema.optional(),
+  /** Lista = exatamente essas ações; null = voltar ao padrão do papel. */
+  acoes: acoesSchema.nullable().optional(),
   papel: z.enum(['ADMIN', 'GERENTE', 'OPERADOR_CAIXA']).optional(),
 });
 
@@ -171,7 +182,7 @@ usuariosRouter.put('/:id/acesso', async (req, res) => {
   const usuario = await prisma.usuario.findFirst({ where: { id: req.params.id, tenantId } });
   if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
-  const dadosAtualizacao: { papel?: PapelUsuario; permissoes?: string[] } = {};
+  const dadosAtualizacao: Prisma.UsuarioUncheckedUpdateInput = {};
 
   if (parse.data.papel && parse.data.papel !== usuario.papel) {
     if (usuario.id === idSolicitante) {
@@ -189,6 +200,10 @@ usuariosRouter.put('/:id/acesso', async (req, res) => {
 
   if (parse.data.permissoes) {
     dadosAtualizacao.permissoes = parse.data.permissoes;
+  }
+  if (parse.data.acoes !== undefined) {
+    dadosAtualizacao.acoes = parse.data.acoes === null ? Prisma.JsonNull : parse.data.acoes;
+    await registrarAuditoria(tenantId, idSolicitante, 'usuario.alterarAcoes', `${usuario.nome}: ${parse.data.acoes === null ? 'padrão do papel' : parse.data.acoes.join(', ') || 'nenhuma'}`);
   }
 
   const atualizado = await prisma.usuario.update({ where: { id: usuario.id }, data: dadosAtualizacao });

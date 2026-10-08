@@ -2,15 +2,20 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
-import { POLITICA_PDV } from '../config/planos.js';
+import { descontoMaximoPercentual, podeFazer } from '../config/acoes.js';
 import { registrarMovimentacao } from '../lib/movimentacaoEstoque.js';
-import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { requerirAcao, requerirTela } from '../middleware/permissao.js';
+import { arredondar, MAX_PARCELAS, PARCELAS_SEM_JUROS, TAXA_CARTAO_CREDITO } from '../config/pdv.js';
+import { VENDA_VALIDA } from '../lib/vendas.js';
+import { mensagemDeValidacao } from '../lib/senha.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 
 const JANELA_DESFAZER_MS = 5 * 60 * 1000;
 
 export const vendasRouter = Router();
 vendasRouter.use(requireAuth, requerirTela(['pdv']));
+
+type FormaDePagamento = 'PIX' | 'CARTAO_CREDITO' | 'CARTAO_DEBITO' | 'DINHEIRO' | 'BOLETO' | 'OUTRO';
 
 function serializarTransacao(t: {
   id: string;
@@ -27,6 +32,9 @@ function serializarTransacao(t: {
   caixaId: string | null;
   vendedorId: string | null;
   observacao: string | null;
+  cancelada: boolean;
+  motivoCancelamento: string | null;
+  pagamentos?: Array<{ forma: string; valor: unknown; parcelas: number }>;
   itens: Array<{
     productId: string;
     nomeProdutoSnapshot: string;
@@ -52,11 +60,14 @@ function serializarTransacao(t: {
     taxas: Number(t.taxas),
     parcelas: t.parcelas,
     formaPagamento: t.formaPagamento ?? undefined,
+    pagamentos: (t.pagamentos ?? []).map((p) => ({ forma: p.forma, valor: Number(p.valor), parcelas: p.parcelas })),
     usuarioId: t.usuarioId,
     clienteId: t.clienteId ?? undefined,
     caixaId: t.caixaId ?? undefined,
     vendedorId: t.vendedorId ?? undefined,
     observacao: t.observacao ?? undefined,
+    cancelada: t.cancelada,
+    motivoCancelamento: t.motivoCancelamento ?? undefined,
   };
 }
 
@@ -64,41 +75,52 @@ vendasRouter.get('/', async (req, res) => {
   const { tenantId } = req.usuario!;
   const transacoes = await prisma.transacao.findMany({
     where: { tenantId, tipo: 'SAIDA' },
-    include: { itens: true },
+    include: { itens: true, pagamentos: true },
     orderBy: { timestamp: 'desc' },
     take: 200, // lista sem paginação: limita pra loja grande não travar a API
   });
   res.json(transacoes.map(serializarTransacao));
 });
 
-const novaVendaSchema = z.object({
-  itens: z
-    .array(
-      z.object({
-        productId: z.string().min(1),
-        quantidade: z.number().int().positive(),
-        // Preço praticado nesse item, se o operador ajustou manualmente na
-        // hora da venda. Se ausente, usa o preço de venda atual do produto.
-        precoUnitario: z.number().nonnegative().optional(),
-      }),
-    )
-    .min(1),
-  desconto: z.number().nonnegative().optional(),
-  taxas: z.number().nonnegative().optional(),
-  parcelas: z.number().int().min(1).max(3).optional(),
-  formaPagamento: z.enum(['PIX', 'CARTAO_CREDITO', 'CARTAO_DEBITO', 'DINHEIRO', 'BOLETO', 'OUTRO']),
-  clienteId: z.string().optional(),
-  vendedorId: z.string().optional(),
-});
+const FORMAS = ['PIX', 'CARTAO_CREDITO', 'CARTAO_DEBITO', 'DINHEIRO', 'BOLETO', 'OUTRO'] as const;
+
+const novaVendaSchema = z
+  .object({
+    itens: z
+      .array(
+        z.object({
+          productId: z.string().min(1),
+          quantidade: z.number().int().positive(),
+          // Preço praticado nesse item, se o operador ajustou manualmente na
+          // hora da venda. Se ausente, usa o preço de venda atual do produto.
+          precoUnitario: z.number().nonnegative().optional(),
+        }),
+      )
+      .min(1),
+    desconto: z.number().nonnegative().optional(),
+    // Uma forma só (jeito antigo, ainda aceito)...
+    formaPagamento: z.enum(FORMAS).optional(),
+    parcelas: z.number().int().min(1).max(MAX_PARCELAS).optional(),
+    // ...ou várias (venda dividida). A taxa do cartão é SEMPRE calculada aqui no servidor.
+    pagamentos: z
+      .array(z.object({ forma: z.enum(FORMAS), valor: z.number().positive(), parcelas: z.number().int().min(1).max(MAX_PARCELAS).optional() }))
+      .min(1)
+      .max(5)
+      .optional(),
+    clienteId: z.string().optional(),
+    vendedorId: z.string().optional(),
+  })
+  .refine((d) => d.pagamentos || d.formaPagamento, { message: 'Informe a forma de pagamento.', path: ['formaPagamento'] });
 
 vendasRouter.post('/', async (req, res) => {
-  const { tenantId, id: usuarioId, papel } = req.usuario!;
-  const politica = POLITICA_PDV[papel];
+  const { tenantId, id: usuarioId } = req.usuario!;
+  const podeAlterarPreco = podeFazer(req.usuario!, 'vendas.alterarPreco');
+  const descontoMaximo = descontoMaximoPercentual(req.usuario!);
   const parse = novaVendaSchema.safeParse(req.body);
   if (!parse.success) {
-    return res.status(400).json({ erro: 'Dados inválidos.', detalhes: parse.error.flatten() });
+    return res.status(400).json({ erro: mensagemDeValidacao(parse.error), detalhes: parse.error.flatten() });
   }
-  const { itens, desconto = 0, taxas = 0, parcelas = 1, formaPagamento, clienteId, vendedorId } = parse.data;
+  const { itens, desconto = 0, clienteId, vendedorId } = parse.data;
 
   const caixaAberto = await prisma.caixa.findFirst({ where: { tenantId, status: 'ABERTO' } });
   if (!caixaAberto) {
@@ -134,9 +156,9 @@ vendasRouter.post('/', async (req, res) => {
           throw new Error(`Estoque insuficiente para "${produto.nome}". Disponível: ${produto.quantidadeEmEstoque}.`);
         }
         const valorUnitario = item.precoUnitario ?? Number(produto.precoVenda);
-        // Preço diferente do cadastrado é ajuste manual: só gerente e admin.
+        // Preço diferente do cadastrado é ajuste manual: exige a ação "alterar preço".
         if (Math.abs(valorUnitario - Number(produto.precoVenda)) > 0.004) {
-          if (!politica.podeAlterarPreco) {
+          if (!podeAlterarPreco) {
             throw new Error(`Seu perfil não pode alterar o preço de "${produto.nome}". Peça a um gerente.`);
           }
           ajustesDePreco.push(`${produto.nome}: ${Number(produto.precoVenda).toFixed(2)} -> ${valorUnitario.toFixed(2)}`);
@@ -146,21 +168,36 @@ vendasRouter.post('/', async (req, res) => {
           nomeProdutoSnapshot: produto.nome,
           quantidade: item.quantidade,
           valorUnitarioPraticado: valorUnitario,
-          subtotal: Number((valorUnitario * item.quantidade).toFixed(2)),
+          subtotal: arredondar(valorUnitario * item.quantidade),
         });
       }
 
-      const valorBruto = itensResolvidos.reduce((acc, i) => acc + i.subtotal, 0);
+      const valorBruto = arredondar(itensResolvidos.reduce((acc, i) => acc + i.subtotal, 0));
       if (desconto > valorBruto + 0.004) throw new Error('O desconto não pode ser maior que o valor da venda.');
       const percentualDesconto = valorBruto > 0 ? (desconto / valorBruto) * 100 : 0;
-      if (percentualDesconto > politica.descontoMaximoPercentual + 0.004) {
-        throw new Error(`Seu perfil pode dar no máximo ${politica.descontoMaximoPercentual}% de desconto. Peça a um gerente.`);
+      if (percentualDesconto > descontoMaximo + 0.004) {
+        throw new Error(`Seu perfil pode dar no máximo ${descontoMaximo}% de desconto. Peça a um gerente.`);
       }
       auditoriaDoAjuste = [
         desconto > 0 ? `desconto ${percentualDesconto.toFixed(1)}% (R$ ${desconto.toFixed(2)})` : '',
         ...ajustesDePreco,
       ].filter(Boolean).join('; ');
-      const valorTotal = Number((valorBruto - desconto + taxas).toFixed(2));
+
+      // Formas de pagamento: o que o cliente paga (sem a taxa) tem de fechar com o total da venda.
+      const subtotalComDesconto = arredondar(valorBruto - desconto);
+      const pagamentos: Array<{ forma: FormaDePagamento; valor: number; parcelas: number }> = parse.data.pagamentos
+        ? parse.data.pagamentos.map((p) => ({ forma: p.forma, valor: arredondar(p.valor), parcelas: p.forma === 'CARTAO_CREDITO' ? (p.parcelas ?? 1) : 1 }))
+        : [{ forma: parse.data.formaPagamento!, valor: subtotalComDesconto, parcelas: parse.data.formaPagamento === 'CARTAO_CREDITO' ? (parse.data.parcelas ?? 1) : 1 }];
+      const somaPagamentos = arredondar(pagamentos.reduce((a, p) => a + p.valor, 0));
+      if (Math.abs(somaPagamentos - subtotalComDesconto) > 0.01) {
+        throw new Error(`A soma das formas de pagamento (R$ ${somaPagamentos.toFixed(2)}) não bate com o valor da venda (R$ ${subtotalComDesconto.toFixed(2)}).`);
+      }
+
+      const baseCredito = pagamentos.filter((p) => p.forma === 'CARTAO_CREDITO' && p.parcelas > PARCELAS_SEM_JUROS).reduce((a, p) => a + p.valor, 0);
+      const taxas = arredondar(baseCredito * TAXA_CARTAO_CREDITO);
+      const valorTotal = arredondar(subtotalComDesconto + taxas);
+      const principal = [...pagamentos].sort((a, b) => b.valor - a.valor)[0];
+      const parcelasDoCredito = Math.max(1, ...pagamentos.filter((p) => p.forma === 'CARTAO_CREDITO').map((p) => p.parcelas));
 
       const novaTransacao = await tx.transacao.create({
         data: {
@@ -169,15 +206,16 @@ vendasRouter.post('/', async (req, res) => {
           valorTotal,
           desconto,
           taxas,
-          parcelas,
-          formaPagamento,
+          parcelas: parcelasDoCredito,
+          formaPagamento: principal.forma,
           usuarioId,
           clienteId: clienteId || undefined,
           caixaId: caixaAberto.id,
           vendedorId: vendedorId || undefined,
           itens: { create: itensResolvidos },
+          pagamentos: { create: pagamentos },
         },
-        include: { itens: true },
+        include: { itens: true, pagamentos: true },
       });
 
       // Baixa condicional: só decrementa se ainda houver saldo no momento da
@@ -196,17 +234,57 @@ vendasRouter.post('/', async (req, res) => {
     });
 
     if (auditoriaDoAjuste) await registrarAuditoria(tenantId, usuarioId, 'venda.ajuste', auditoriaDoAjuste);
-
     res.status(201).json(serializarTransacao(transacao));
   } catch (e) {
     res.status(400).json({ erro: e instanceof Error ? e.message : 'Erro ao registrar venda.' });
   }
 });
 
-/** Desfaz a última venda do turno de caixa aberto — devolve o estoque e
- * apaga a transação. Só nos primeiros minutos depois da venda, pra corrigir
- * erro de digitação sem virar uma forma de apagar vendas antigas escondido
- * (a ação em si fica registrada na auditoria de qualquer forma). */
+/** Cancela uma venda: devolve o estoque e a tira de todos os totais, mas ela continua
+ * registrada (com quem cancelou, quando e por quê). Nada é apagado. */
+async function cancelarVenda(tenantId: string, vendaId: string, usuarioId: string, motivo: string) {
+  return prisma.$transaction(async (tx) => {
+    const venda = await tx.transacao.findFirst({ where: { id: vendaId, tenantId, tipo: 'SAIDA' }, include: { itens: true } });
+    if (!venda) return { erro: 'Venda não encontrada.', status: 404 as const };
+    if (venda.cancelada) return { erro: 'Esta venda já foi cancelada.', status: 409 as const };
+
+    // Só vendas do caixa aberto: depois do fechamento, o total do turno já foi conferido e entregue.
+    const caixa = venda.caixaId ? await tx.caixa.findUnique({ where: { id: venda.caixaId } }) : null;
+    if (!caixa || caixa.status !== 'ABERTO') {
+      return { erro: 'Só dá para cancelar vendas do caixa aberto. Para esta, faça um lançamento no financeiro.', status: 409 as const };
+    }
+
+    // Marca primeiro, de forma condicional: dois cancelamentos simultâneos não devolvem o estoque duas vezes.
+    const marcada = await tx.transacao.updateMany({
+      where: { id: venda.id, cancelada: false },
+      data: { cancelada: true, canceladaEm: new Date(), canceladaPorId: usuarioId, motivoCancelamento: motivo },
+    });
+    if (marcada.count === 0) return { erro: 'Esta venda já foi cancelada.', status: 409 as const };
+
+    for (const item of venda.itens) {
+      await tx.produto.update({ where: { id: item.productId }, data: { quantidadeEmEstoque: { increment: item.quantidade } } });
+      await registrarMovimentacao(tx, { tenantId, produtoId: item.productId, tipo: 'ESTORNO', quantidade: item.quantidade, usuarioId, motivo: `Venda cancelada: ${motivo}`, referenciaId: venda.id });
+    }
+    return { venda };
+  });
+}
+
+const cancelarSchema = z.object({ motivo: z.string().trim().min(3, 'Explique o motivo do cancelamento.').max(191) });
+
+vendasRouter.post('/:id/cancelar', requerirAcao('vendas.cancelar'), async (req, res) => {
+  const { tenantId, id: usuarioId } = req.usuario!;
+  const parse = cancelarSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: parse.error.issues[0]?.message ?? 'Informe o motivo.' });
+
+  const r = await cancelarVenda(tenantId, req.params.id, usuarioId, parse.data.motivo);
+  if (!r.venda) return res.status(r.status ?? 400).json({ erro: r.erro });
+  await registrarAuditoria(tenantId, usuarioId, 'venda.cancelar', `Venda de R$ ${Number(r.venda.valorTotal).toFixed(2)}: ${parse.data.motivo}`);
+  res.status(204).end();
+});
+
+/** Desfaz a última venda do turno de caixa aberto, logo depois de feita (até 5 minutos), pra
+ * corrigir erro de digitação. Qualquer operador do PDV pode; é um cancelamento comum
+ * (a venda fica registrada como cancelada), só que sem pedir motivo. */
 vendasRouter.post('/ultima/desfazer', async (req, res) => {
   const { tenantId, id: usuarioId } = req.usuario!;
 
@@ -214,32 +292,17 @@ vendasRouter.post('/ultima/desfazer', async (req, res) => {
   if (!caixaAberto) return res.status(400).json({ erro: 'Nenhum caixa aberto.' });
 
   const ultimaVenda = await prisma.transacao.findFirst({
-    where: { tenantId, tipo: 'SAIDA', caixaId: caixaAberto.id },
+    where: { tenantId, ...VENDA_VALIDA, caixaId: caixaAberto.id },
     orderBy: { timestamp: 'desc' },
-    include: { itens: true },
   });
   if (!ultimaVenda) return res.status(404).json({ erro: 'Nenhuma venda pra desfazer neste turno.' });
 
   if (Date.now() - ultimaVenda.timestamp.getTime() > JANELA_DESFAZER_MS) {
-    return res.status(400).json({ erro: 'Só dá pra desfazer uma venda até 5 minutos depois dela.' });
+    return res.status(400).json({ erro: 'Só dá pra desfazer uma venda até 5 minutos depois dela. Depois disso, peça a um gerente para cancelá-la.' });
   }
 
-  await prisma.$transaction(async (tx) => {
-    for (const item of ultimaVenda.itens) {
-      await tx.produto.update({
-        where: { id: item.productId },
-        data: { quantidadeEmEstoque: { increment: item.quantidade } },
-      });
-      await registrarMovimentacao(tx, { tenantId, produtoId: item.productId, tipo: 'ESTORNO', quantidade: item.quantidade, usuarioId, motivo: 'Venda desfeita', referenciaId: ultimaVenda.id });
-    }
-    await tx.transacao.delete({ where: { id: ultimaVenda.id } });
-  });
-
-  await registrarAuditoria(
-    tenantId,
-    usuarioId,
-    'venda.desfazer',
-    `Venda de R$ ${Number(ultimaVenda.valorTotal).toFixed(2)}`,
-  );
+  const r = await cancelarVenda(tenantId, ultimaVenda.id, usuarioId, 'Desfeita logo após a venda');
+  if (!r.venda) return res.status(r.status ?? 400).json({ erro: r.erro });
+  await registrarAuditoria(tenantId, usuarioId, 'venda.desfazer', `Venda de R$ ${Number(ultimaVenda.valorTotal).toFixed(2)}`);
   res.status(204).send();
 });

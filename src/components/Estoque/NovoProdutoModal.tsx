@@ -17,6 +17,7 @@ export function NovoProdutoModal({ produto, categorias, aoFechar, aoConfirmar, a
   const editando = Boolean(produto);
   const [nome, setNome] = useState(produto?.nome ?? '');
   const [sku, setSku] = useState(produto?.sku ?? '');
+  const [codigoBarras, setCodigoBarras] = useState(produto?.codigoBarras ?? '');
   const [categoriaId, setCategoriaId] = useState(produto?.categoriaId ?? categorias[0]?.id ?? '');
   const [novaCategoria, setNovaCategoria] = useState('');
   const [criandoCategoria, setCriandoCategoria] = useState(false);
@@ -51,6 +52,7 @@ export function NovoProdutoModal({ produto, categorias, aoFechar, aoConfirmar, a
       await aoConfirmar({
         nome: nome.trim(),
         sku: sku.trim(),
+        codigoBarras: codigoBarras.trim() || undefined,
         categoriaId,
         precoCusto,
         precoVenda,
@@ -88,6 +90,17 @@ export function NovoProdutoModal({ produto, categorias, aoFechar, aoConfirmar, a
               value={sku}
               onChange={(e) => setSku(e.target.value)}
               className="mt-1 w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 focus:border-tenant focus:outline-none"
+            />
+          </label>
+
+          <label className="block text-sm text-ink-300">
+            Código de barras (opcional)
+            <input
+              value={codigoBarras}
+              onChange={(e) => setCodigoBarras(e.target.value)}
+              inputMode="numeric"
+              placeholder="Passe o leitor aqui"
+              className="mt-1 w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 font-mono text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none"
             />
           </label>
 

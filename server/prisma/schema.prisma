@@ -127,6 +127,7 @@ model Tenant {
   acessosExtras         AcessoLoja[]
   registrosAuditoria    RegistroAuditoria[]
   movimentacoesEstoque  MovimentacaoEstoque[]
+  movimentosCaixa       MovimentoCaixa[]
 
   @@index([empresaId])
 }
@@ -159,6 +160,9 @@ model Usuario {
   /// Ignorado para papel ADMIN, que sempre tem acesso total. `null` (contas
   /// antigas, antes desse campo existir) também é tratado como acesso total.
   permissoes Json?
+  /// Ações finas que a pessoa pode fazer (ex: cancelar venda, sangria). `null` = o padrão do
+  /// papel (server/src/config/acoes.ts); uma lista = exatamente essas. ADMIN sempre pode tudo.
+  acoes      Json?
   /// Conta principal da loja, criada junto com o tenant no cadastro. Não
   /// pode ser desativada por ninguém — nem por outro Admin — pra loja nunca
   /// ficar sem um login que funcione.
@@ -202,6 +206,8 @@ model Produto {
   tenantId              String
   nome                  String
   sku                   String
+  /// EAN/UPC lido pelo leitor no PDV (opcional; o SKU também é aceito na leitura).
+  codigoBarras          String?
   categoriaId           String
   precoCusto            Decimal  @db.Decimal(12, 2)
   precoVenda            Decimal  @db.Decimal(12, 2)
@@ -219,6 +225,7 @@ model Produto {
 
   @@unique([tenantId, sku])
   @@index([categoriaId])
+  @@index([tenantId, codigoBarras])
 }
 
 model Cliente {
@@ -273,6 +280,11 @@ model Transacao {
   /// Quem fez a venda, pra apuração de comissão (opcional).
   vendedorId     String?
   observacao     String?
+  /// Venda cancelada: continua registrada (auditoria), mas não conta em nenhum total.
+  cancelada         Boolean   @default(false)
+  canceladaEm       DateTime?
+  canceladaPorId    String?
+  motivoCancelamento String?
 
   tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   usuario  Usuario         @relation(fields: [usuarioId], references: [id])
@@ -280,6 +292,7 @@ model Transacao {
   caixa    Caixa?          @relation(fields: [caixaId], references: [id])
   vendedor Vendedor?       @relation(fields: [vendedorId], references: [id])
   itens    ItemTransacao[]
+  pagamentos PagamentoVenda[]
 
   @@index([tenantId, timestamp])
   @@index([vendedorId])
@@ -347,6 +360,7 @@ model Caixa {
   abertoPor  Usuario     @relation("CaixaAbertoPor", fields: [abertoPorId], references: [id])
   fechadoPor Usuario?    @relation("CaixaFechadoPor", fields: [fechadoPorId], references: [id])
   vendas     Transacao[]
+  movimentos MovimentoCaixa[]
 
   @@index([tenantId, status])
 }
@@ -460,4 +474,42 @@ model AvisoEnviado {
   empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
 
   @@unique([empresaId, tipo, chave])
+}
+
+/// Uma forma de pagamento usada numa venda. Venda com um meio só tem uma linha; venda
+/// dividida (ex: parte Pix, parte dinheiro) tem várias. `valor` é o da venda coberto por
+/// essa forma (a taxa do cartão fica em Transacao.taxas).
+model PagamentoVenda {
+  id          String          @id @default(uuid())
+  transacaoId String
+  forma       FormaPagamento
+  valor       Decimal         @db.Decimal(12, 2)
+  parcelas    Int             @default(1)
+
+  transacao Transacao @relation(fields: [transacaoId], references: [id], onDelete: Cascade)
+
+  @@index([transacaoId])
+}
+
+enum TipoMovimentoCaixa {
+  SANGRIA
+  SUPRIMENTO
+}
+
+/// Dinheiro que sai (sangria: retirada pro cofre, pagamento de fornecedor) ou entra
+/// (suprimento: troco colocado na gaveta) durante o turno do caixa.
+model MovimentoCaixa {
+  id        String             @id @default(uuid())
+  tenantId  String
+  caixaId   String
+  tipo      TipoMovimentoCaixa
+  valor     Decimal            @db.Decimal(12, 2)
+  motivo    String
+  usuarioId String
+  criadoEm  DateTime           @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caixa  Caixa  @relation(fields: [caixaId], references: [id], onDelete: Cascade)
+
+  @@index([caixaId])
 }

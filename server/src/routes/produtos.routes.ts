@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { VENDA_VALIDA } from '../lib/vendas.js';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { requerirAcao, requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { podeFazer } from '../config/acoes.js';
 import { registrarMovimentacao } from '../lib/movimentacaoEstoque.js';
 import { verificarLimiteRecurso } from '../middleware/plano.js';
 import { contarProdutosComEstoqueBaixo } from '../lib/estoque.js';
@@ -18,6 +20,7 @@ function serializarProduto(p: {
   tenantId: string;
   nome: string;
   sku: string;
+  codigoBarras?: string | null;
   categoriaId: string;
   precoCusto: unknown;
   precoVenda: unknown;
@@ -33,6 +36,7 @@ function serializarProduto(p: {
     tenantId: p.tenantId,
     nome: p.nome,
     sku: p.sku,
+    codigoBarras: p.codigoBarras ?? undefined,
     categoriaId: p.categoriaId,
     precoCusto: Number(p.precoCusto),
     precoVenda: Number(p.precoVenda),
@@ -55,7 +59,7 @@ produtosRouter.get('/', async (req, res) => {
   const where = {
     tenantId,
     ativo: !inativos,
-    ...(termo ? { OR: [{ nome: { contains: termo } }, { sku: { contains: termo } }] } : {}),
+    ...(termo ? { OR: [{ nome: { contains: termo } }, { sku: { contains: termo } }, { codigoBarras: { contains: termo } }] } : {}),
   };
 
   const [produtos, total, produtosComEstoqueBaixo] = await Promise.all([
@@ -75,6 +79,18 @@ produtosRouter.get('/', async (req, res) => {
   });
 });
 
+/** Leitor de código de barras no PDV: acha o produto ATIVO pelo código de barras OU pelo SKU
+ * (igualdade exata, ao contrário da busca por texto). 404 se não houver. */
+produtosRouter.get('/codigo/:codigo', async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const codigo = req.params.codigo.trim();
+  const produto = await prisma.produto.findFirst({
+    where: { tenantId, ativo: true, OR: [{ codigoBarras: codigo }, { sku: codigo }] },
+  });
+  if (!produto) return res.status(404).json({ erro: 'Nenhum produto com esse código.' });
+  res.json(serializarProduto(produto));
+});
+
 /** Sugestão de reposição: produtos no mínimo ou abaixo, com uma sugestão de
  * quantidade baseada no ritmo de venda dos últimos 30 dias (o suficiente pra
  * cobrir mais 30 dias de venda, descontando o que já tem em estoque). Sem
@@ -92,7 +108,7 @@ produtosRouter.get('/sugestao-reposicao', requerirTela(['estoque']), async (req,
   const itensVendidos = await prisma.itemTransacao.findMany({
     where: {
       productId: { in: baixos.map((p) => p.id) },
-      transacao: { tenantId, tipo: 'SAIDA', timestamp: { gte: trintaDiasAtras } },
+      transacao: { tenantId, ...VENDA_VALIDA, timestamp: { gte: trintaDiasAtras } },
     },
     select: { productId: true, quantidade: true },
   });
@@ -132,6 +148,8 @@ produtosRouter.get('/:id', async (req, res) => {
 const produtoSchema = z.object({
   nome: z.string().min(1),
   sku: z.string().min(1),
+  /** EAN/UPC do produto, lido pelo leitor no PDV. Vazio = sem código. */
+  codigoBarras: z.string().trim().max(64).optional(),
   categoriaId: z.string().min(1),
   precoCusto: z.number().nonnegative(),
   precoVenda: z.number().nonnegative(),
@@ -139,6 +157,11 @@ const produtoSchema = z.object({
   estoqueMinimo: z.number().int().nonnegative(),
   atributosCustomizados: z.array(z.object({ chave: z.string(), valor: z.union([z.string(), z.number(), z.boolean()]) })).optional(),
 });
+
+/** O código de barras identifica UM produto da loja: repetido, o leitor não saberia qual vender. */
+async function codigoDeBarrasEmUso(tenantId: string, codigo: string, exceto?: string) {
+  return prisma.produto.findFirst({ where: { tenantId, codigoBarras: codigo, ...(exceto ? { id: { not: exceto } } : {}) }, select: { nome: true } });
+}
 
 produtosRouter.post('/', async (req, res) => {
   const { tenantId } = req.usuario!;
@@ -156,6 +179,10 @@ produtosRouter.post('/', async (req, res) => {
   if (!categoria) {
     return res.status(400).json({ erro: 'Categoria inválida.' });
   }
+  if (parse.data.codigoBarras) {
+    const outro = await codigoDeBarrasEmUso(tenantId, parse.data.codigoBarras);
+    if (outro) return res.status(409).json({ erro: `Esse código de barras já é do produto "${outro.nome}".` });
+  }
 
   const limiteExcedido = await verificarLimiteRecurso(tenantId, 'produtos');
   if (limiteExcedido) {
@@ -163,7 +190,7 @@ produtosRouter.post('/', async (req, res) => {
   }
 
   const produto = await prisma.$transaction(async (tx) => {
-    const criado = await tx.produto.create({ data: { ...parse.data, tenantId } });
+    const criado = await tx.produto.create({ data: { ...parse.data, codigoBarras: parse.data.codigoBarras || undefined, tenantId } });
     await registrarMovimentacao(tx, { tenantId, produtoId: criado.id, tipo: 'INICIAL', quantidade: criado.quantidadeEmEstoque, usuarioId: req.usuario!.id, motivo: 'Cadastro do produto' });
     return criado;
   });
@@ -176,6 +203,7 @@ const importarSchema = z.object({
       z.object({
         nome: z.string().min(1),
         sku: z.string().min(1),
+        codigoBarras: z.string().trim().max(64).optional(),
         categoria: z.string().min(1),
         precoCusto: z.number().nonnegative(),
         precoVenda: z.number().nonnegative(),
@@ -216,6 +244,14 @@ produtosRouter.post('/importar', async (req, res) => {
     return res.status(400).json({ erro: `SKU(s) duplicado(s) no arquivo: ${skusDuplicadosNoArquivo.join(', ')}` });
   }
 
+  const codigos = parse.data.produtos.map((p) => p.codigoBarras).filter((c): c is string => Boolean(c));
+  const codigosRepetidos = [...new Set(codigos.filter((c, i) => codigos.indexOf(c) !== i))];
+  if (codigosRepetidos.length > 0) return res.status(400).json({ erro: `Código(s) de barras repetido(s) no arquivo: ${codigosRepetidos.join(', ')}` });
+  if (codigos.length > 0) {
+    const emUso = await prisma.produto.findMany({ where: { tenantId, codigoBarras: { in: codigos } }, select: { codigoBarras: true } });
+    if (emUso.length > 0) return res.status(409).json({ erro: `Código(s) de barras já cadastrados: ${emUso.map((p) => p.codigoBarras).join(', ')}` });
+  }
+
   const skusExistentes = await prisma.produto.findMany({ where: { tenantId, sku: { in: skus } }, select: { sku: true } });
   if (skusExistentes.length > 0) {
     return res.status(409).json({ erro: `SKU(s) já cadastrados: ${skusExistentes.map((p) => p.sku).join(', ')}` });
@@ -239,6 +275,7 @@ produtosRouter.post('/importar', async (req, res) => {
             tenantId,
             nome: p.nome,
             sku: p.sku,
+            codigoBarras: p.codigoBarras || undefined,
             categoriaId: mapaCategorias.get(p.categoria.trim())!,
             precoCusto: p.precoCusto,
             precoVenda: p.precoVenda,
@@ -304,6 +341,9 @@ produtosRouter.patch('/:id/ativo', requerirTela(['estoque']), async (req, res) =
   if (!produto) return res.status(404).json({ erro: 'Produto não encontrado.' });
   if (produto.ativo === parse.data.ativo) return res.json(serializarProduto(produto));
 
+  if (!parse.data.ativo && !podeFazer(req.usuario!, 'registros.excluir')) {
+    return res.status(403).json({ erro: 'Seu perfil não tem permissão para excluir produtos. Peça a um administrador.' });
+  }
   if (parse.data.ativo) {
     const limiteExcedido = await verificarLimiteRecurso(tenantId, 'produtos');
     if (limiteExcedido) return res.status(403).json(limiteExcedido);
@@ -337,15 +377,20 @@ produtosRouter.put('/:id', async (req, res) => {
     const categoria = await prisma.categoria.findFirst({ where: { id: parse.data.categoriaId, tenantId } });
     if (!categoria) return res.status(400).json({ erro: 'Categoria inválida.' });
   }
+  if (parse.data.codigoBarras) {
+    const outro = await codigoDeBarrasEmUso(tenantId, parse.data.codigoBarras, produto.id);
+    if (outro) return res.status(409).json({ erro: `Esse código de barras já é do produto "${outro.nome}".` });
+  }
 
   const atualizado = await prisma.produto.update({
     where: { id: produto.id },
-    data: parse.data,
+    // codigoBarras vazio apaga o código; omitido, não mexe.
+    data: { ...parse.data, codigoBarras: parse.data.codigoBarras === undefined ? undefined : parse.data.codigoBarras || null },
   });
   res.json(serializarProduto(atualizado));
 });
 
-produtosRouter.delete('/:id', async (req, res) => {
+produtosRouter.delete('/:id', requerirAcao('registros.excluir'), async (req, res) => {
   const { tenantId, id: usuarioId } = req.usuario!;
   const produto = await prisma.produto.findFirst({ where: { id: req.params.id, tenantId } });
   if (!produto) return res.status(404).json({ erro: 'Produto não encontrado.' });

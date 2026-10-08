@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { VENDA_VALIDA } from '../lib/vendas.js';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
@@ -186,7 +187,7 @@ lojasRouter.get('/', async (req, res) => {
     prisma.produto.groupBy({ by: ['tenantId'], where: { tenantId: { in: ids }, ativo: true }, _count: { _all: true } }),
     prisma.transacao.groupBy({
       by: ['tenantId'],
-      where: { tenantId: { in: ids }, tipo: 'SAIDA', timestamp: { gte: inicioDoMes } },
+      where: { tenantId: { in: ids }, ...VENDA_VALIDA, timestamp: { gte: inicioDoMes } },
       _sum: { valorTotal: true },
       _count: { _all: true },
     }),
