@@ -8,6 +8,7 @@ import { useConfirm } from '@/contexts/ConfirmContext';
 import {
   cancelarAssinatura,
   getAssinatura,
+  getCobrancas,
   getUsuarios,
   iniciarCheckoutAssinatura,
   searchProducts,
@@ -16,7 +17,7 @@ import {
 import { LIMITES_POR_PLANO, diasRestantesTrial } from '@/utils/planos';
 import { linkWhatsapp } from '@/utils/contato';
 import { formatarMoeda } from '@/utils/formatters';
-import type { AssinaturaResumo, PlanoSaaS } from '@/types';
+import type { AssinaturaResumo, CobrancaAssinatura, PlanoSaaS } from '@/types';
 
 const ROTULOS_PLANO: Record<PlanoSaaS, string> = {
   FREE: 'Free',
@@ -81,6 +82,7 @@ export function MeuPlanoScreen() {
   const [assinatura, setAssinatura] = useState<AssinaturaResumo | null>(null);
   const [totalUsuarios, setTotalUsuarios] = useState(0);
   const [totalProdutos, setTotalProdutos] = useState(0);
+  const [cobrancas, setCobrancas] = useState<CobrancaAssinatura[]>([]);
   const [trabalhando, setTrabalhando] = useState<string | null>(null);
   const voltouDoCheckout = useRef(params.get('retorno') === '1');
 
@@ -102,7 +104,10 @@ export function MeuPlanoScreen() {
         setTotalProdutos(produtos.total);
       }).catch(() => undefined); // sem permissão para ver o uso: a tela segue sem as barras
     }
-    carregar().catch((e) => toast.erro(e instanceof Error ? e.message : 'Erro ao carregar o plano.'));
+    carregar()
+      .then((resumo) => (resumo.status === 'NENHUMA' || resumo.status === 'PENDENTE' ? [] : getCobrancas()))
+      .then(setCobrancas)
+      .catch((e) => toast.erro(e instanceof Error ? e.message : 'Erro ao carregar o plano.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant?.id, expirado]);
 
@@ -329,6 +334,40 @@ export function MeuPlanoScreen() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {contaPrincipal && cobrancas.length > 0 && (
+            <div className="rounded-xl border border-ink-700 bg-ink-800 p-6">
+              <p className="mb-4 font-display text-lg font-semibold text-ink-100">Cobranças</p>
+              <div className="overflow-hidden rounded-lg border border-ink-700">
+                <table className="w-full text-sm">
+                  <thead className="bg-ink-700/40 text-left text-xs uppercase tracking-wide text-ink-400">
+                    <tr>
+                      <th className="px-4 py-2.5 font-medium">Data</th>
+                      <th className="px-4 py-2.5 font-medium">Situação</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-ink-700">
+                    {cobrancas.map((c) => {
+                      const paga = c.statusDoPagamento === 'approved';
+                      const recusada = c.statusDoPagamento === 'rejected' || c.statusDoPagamento === 'cancelled';
+                      return (
+                        <tr key={c.id}>
+                          <td className="px-4 py-2.5 text-ink-300">{c.data ? dataCurta(c.data) : '-'}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={['rounded-full px-2 py-0.5 text-xs font-medium', paga ? 'bg-emerald-500/15 text-emerald-400' : recusada ? 'bg-red-500/15 text-red-400' : 'bg-ink-700 text-ink-300'].join(' ')}>
+                              {paga ? 'Paga' : recusada ? 'Recusada' : c.status === 'scheduled' ? 'Agendada' : 'Em processamento'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono text-ink-100">{formatarMoeda(c.valor, tenant)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { POLITICA_PDV } from '../config/planos.js';
+import { registrarMovimentacao } from '../lib/movimentacaoEstoque.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 
@@ -188,6 +189,7 @@ vendasRouter.post('/', async (req, res) => {
           data: { quantidadeEmEstoque: { decrement: item.quantidade } },
         });
         if (baixa.count === 0) throw new Error(`Estoque insuficiente para "${item.nomeProdutoSnapshot}".`);
+        await registrarMovimentacao(tx, { tenantId, produtoId: item.productId, tipo: 'VENDA', quantidade: -item.quantidade, usuarioId, referenciaId: novaTransacao.id });
       }
 
       return novaTransacao;
@@ -228,6 +230,7 @@ vendasRouter.post('/ultima/desfazer', async (req, res) => {
         where: { id: item.productId },
         data: { quantidadeEmEstoque: { increment: item.quantidade } },
       });
+      await registrarMovimentacao(tx, { tenantId, produtoId: item.productId, tipo: 'ESTORNO', quantidade: item.quantidade, usuarioId, motivo: 'Venda desfeita', referenciaId: ultimaVenda.id });
     }
     await tx.transacao.delete({ where: { id: ultimaVenda.id } });
   });

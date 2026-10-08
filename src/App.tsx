@@ -14,6 +14,7 @@ import { RelatoriosScreen } from '@/components/Relatorios/RelatoriosScreen';
 import { FinanceiroScreen } from '@/components/Financeiro/FinanceiroScreen';
 import { LojasScreen } from '@/components/Lojas/LojasScreen';
 import { LancamentosScreen } from '@/components/Financeiro/LancamentosScreen';
+import { ContasScreen } from '@/components/Financeiro/ContasScreen';
 import { UsuariosScreen } from '@/components/Usuarios/UsuariosScreen';
 import { MeuPlanoScreen } from '@/components/Conta/MeuPlanoScreen';
 import { AuditoriaScreen } from '@/components/Conta/AuditoriaScreen';
@@ -22,6 +23,7 @@ import { RegisterScreen } from '@/components/Auth/RegisterScreen';
 import { EsqueciSenhaScreen } from '@/components/Auth/EsqueciSenhaScreen';
 import { RedefinirSenhaScreen } from '@/components/Auth/RedefinirSenhaScreen';
 import { MinhaContaScreen } from '@/components/Conta/MinhaContaScreen';
+import { EmpresaScreen } from '@/components/Conta/EmpresaScreen';
 import { AdminScreen } from '@/components/Admin/AdminScreen';
 import { LandingPage } from '@/components/Marketing/LandingPage';
 import { NotFoundScreen } from '@/components/Common/NotFoundScreen';
@@ -96,6 +98,14 @@ function Roteador() {
       {/* Aberta mesmo com sessão: quem clica no link do e-mail pode já estar logado neste navegador. */}
       <Route path="/redefinir-senha" element={<RedefinirSenhaScreen />} />
       <Route
+        path="/empresa"
+        element={
+          <RotaProtegida>
+            <EmpresaScreen />
+          </RotaProtegida>
+        }
+      />
+      <Route
         path="/conta"
         element={
           <RotaProtegida>
@@ -140,6 +150,14 @@ function Roteador() {
         element={
           <RotaProtegida tela="financeiro">
             <FinanceiroScreen />
+          </RotaProtegida>
+        }
+      />
+      <Route
+        path="/financeiro/contas"
+        element={
+          <RotaProtegida tela="financeiro">
+            <ContasScreen />
           </RotaProtegida>
         }
       />

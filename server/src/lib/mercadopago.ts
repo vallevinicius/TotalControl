@@ -118,3 +118,26 @@ export function assinaturaDoWebhookValida(cabecalhos: { assinatura?: string; idR
   const calculado = Buffer.from(esperado, 'hex');
   return recebido.length === calculado.length && crypto.timingSafeEqual(recebido, calculado);
 }
+
+export interface CobrancaMp {
+  id: string;
+  /** scheduled | processed | recycling | cancelled (estado da cobrança recorrente) */
+  status: string;
+  valor: number;
+  data: string;
+  statusDoPagamento?: string;
+}
+
+/** Cobranças (mensalidades) de uma assinatura, da mais nova para a mais antiga. */
+export async function listarCobrancas(assinaturaId: string): Promise<CobrancaMp[]> {
+  const r = await chamar<{ results?: Array<Record<string, any>> }>(`/authorized_payments/search?preapproval_id=${encodeURIComponent(assinaturaId)}`);
+  return (r.results ?? [])
+    .map((c) => ({
+      id: String(c.id),
+      status: String(c.status ?? ''),
+      valor: Number(c.transaction_amount ?? 0),
+      data: String(c.debit_date ?? c.date_created ?? ''),
+      statusDoPagamento: c.payment?.status ? String(c.payment.status) : undefined,
+    }))
+    .sort((a, b) => b.data.localeCompare(a.data));
+}

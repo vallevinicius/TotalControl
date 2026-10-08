@@ -15,7 +15,11 @@ import {
   createCategoria,
   deactivateProduct,
   importarProdutos,
+  setProdutoAtivo,
+  ajustarEstoque,
+  getTodosOsProdutos,
 } from '@/services/apiService';
+import { baixarCsv } from '@/utils/csv';
 import { formatarMoeda } from '@/utils/formatters';
 import { LIMITES_POR_PLANO } from '@/utils/planos';
 import type { Categoria, Produto, ProdutoParaImportar } from '@/types';
@@ -23,6 +27,9 @@ import { EntradaEstoqueModal } from './EntradaEstoqueModal';
 import { NovoProdutoModal } from './NovoProdutoModal';
 import { SugestaoReposicaoModal } from './SugestaoReposicaoModal';
 import { ImportarProdutosModal } from './ImportarProdutosModal';
+import { AjusteEstoqueModal } from './AjusteEstoqueModal';
+import { HistoricoProdutoModal } from './HistoricoProdutoModal';
+import { CategoriasModal } from './CategoriasModal';
 
 export function EstoqueScreen() {
   const { tenant } = useTenant();
@@ -34,6 +41,11 @@ export function EstoqueScreen() {
   const [produtoParaEntrada, setProdutoParaEntrada] = useState<Produto | null>(null);
   const [mostrarNovoProduto, setMostrarNovoProduto] = useState(false);
   const [produtoParaEditar, setProdutoParaEditar] = useState<Produto | null>(null);
+  const [produtoParaAjuste, setProdutoParaAjuste] = useState<Produto | null>(null);
+  const [produtoHistorico, setProdutoHistorico] = useState<Produto | null>(null);
+  const [mostrarCategorias, setMostrarCategorias] = useState(false);
+  const [mostrarInativos, setMostrarInativos] = useState(false);
+  const [exportando, setExportando] = useState(false);
   const [mostrarSugestao, setMostrarSugestao] = useState(false);
   const [mostrarImportar, setMostrarImportar] = useState(false);
   const [termoBusca, setTermoBusca] = useState('');
@@ -45,7 +57,7 @@ export function EstoqueScreen() {
   async function carregarDados() {
     setCarregando(true);
     const [resultado, categoriasCarregadas] = await Promise.all([
-      searchProducts(termoBusca, pagina),
+      searchProducts(termoBusca, pagina, 20, mostrarInativos),
       getCategorias(),
     ]);
     setProdutos(resultado.itens);
@@ -59,7 +71,7 @@ export function EstoqueScreen() {
   useEffect(() => {
     if (tenant) carregarDados();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant, pagina, termoBusca]);
+  }, [tenant, pagina, termoBusca, mostrarInativos]);
 
   function handleBuscar(valor: string) {
     setTermoBusca(valor);
@@ -95,6 +107,44 @@ export function EstoqueScreen() {
       toast.sucesso(`"${produto.nome}" excluído.`);
     } catch (erro) {
       toast.erro(erro instanceof Error ? erro.message : 'Erro ao excluir produto.');
+    }
+  }
+
+  async function reativarProduto(produto: Produto) {
+    try {
+      await setProdutoAtivo(produto.id, true);
+      await carregarDados();
+      toast.sucesso(`"${produto.nome}" voltou ao estoque.`);
+    } catch (erro) {
+      toast.erro(erro instanceof Error ? erro.message : 'Erro ao reativar produto.');
+    }
+  }
+
+  async function confirmarAjuste(produto: Produto, novaQuantidade: number, motivo: string) {
+    try {
+      const r = await ajustarEstoque(produto.id, novaQuantidade, motivo);
+      await carregarDados();
+      toast.sucesso(`Estoque de "${produto.nome}" ajustado (${r.diferenca > 0 ? '+' : ''}${r.diferenca}).`);
+    } catch (erro) {
+      toast.erro(erro instanceof Error ? erro.message : 'Erro ao ajustar o estoque.');
+      throw erro;
+    }
+  }
+
+  async function exportarCsv() {
+    setExportando(true);
+    try {
+      const todos = await getTodosOsProdutos();
+      baixarCsv(
+        `produtos_${new Date().toISOString().slice(0, 10)}.csv`,
+        ['nome', 'sku', 'categoria', 'precoCusto', 'precoVenda', 'quantidadeEmEstoque', 'estoqueMinimo'],
+        todos.map((p) => [p.nome, p.sku, nomeCategoria(p.categoriaId), p.precoCusto, p.precoVenda, p.quantidadeEmEstoque, p.estoqueMinimo]),
+      );
+      toast.sucesso(`${todos.length} produto(s) exportado(s).`);
+    } catch (erro) {
+      toast.erro(erro instanceof Error ? erro.message : 'Erro ao exportar.');
+    } finally {
+      setExportando(false);
     }
   }
 
@@ -146,6 +196,25 @@ export function EstoqueScreen() {
             </p>
           )}
           <button
+            onClick={() => setMostrarInativos((v) => { setPagina(1); return !v; })}
+            className={['rounded-lg border px-3 py-2 text-sm font-medium', mostrarInativos ? 'border-tenant bg-tenant-soft text-tenant' : 'border-ink-600 text-ink-200 hover:border-tenant hover:text-tenant'].join(' ')}
+          >
+            {mostrarInativos ? 'Ver ativos' : 'Ver excluídos'}
+          </button>
+          <button
+            onClick={() => setMostrarCategorias(true)}
+            className="rounded-lg border border-ink-600 px-3 py-2 text-sm font-medium text-ink-200 hover:border-tenant hover:text-tenant"
+          >
+            Categorias
+          </button>
+          <button
+            onClick={exportarCsv}
+            disabled={exportando}
+            className="rounded-lg border border-ink-600 px-3 py-2 text-sm font-medium text-ink-200 hover:border-tenant hover:text-tenant disabled:opacity-40"
+          >
+            {exportando ? 'Exportando…' : 'Exportar CSV'}
+          </button>
+          <button
             onClick={() => setMostrarSugestao(true)}
             className="rounded-lg border border-ink-600 px-3 py-2 text-sm font-medium text-ink-200 hover:border-tenant hover:text-tenant"
           >
@@ -174,7 +243,7 @@ export function EstoqueScreen() {
       ) : produtos.length === 0 ? (
         <div className="rounded-xl border border-dashed border-ink-700 p-10 text-center">
           <p className="text-sm text-ink-400">
-            {termoBusca ? 'Nenhum produto encontrado.' : 'Nenhum produto cadastrado ainda.'}
+            {termoBusca ? 'Nenhum produto encontrado.' : mostrarInativos ? 'Nenhum produto excluído.' : 'Nenhum produto cadastrado ainda.'}
           </p>
         </div>
       ) : (
@@ -209,25 +278,35 @@ export function EstoqueScreen() {
                     <EstoqueBadge quantidadeEmEstoque={produto.quantidadeEmEstoque} estoqueMinimo={produto.estoqueMinimo} />
                   </td>
                   <td className="px-5 py-3.5 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => setProdutoParaEntrada(produto)}
-                        className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
-                      >
-                        + Entrada
-                      </button>
-                      <button
-                        onClick={() => setProdutoParaEditar(produto)}
-                        className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        onClick={() => excluirProduto(produto)}
-                        className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400"
-                      >
-                        Excluir
-                      </button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {produto.ativo ? (
+                        <>
+                          <button onClick={() => setProdutoParaEntrada(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                            + Entrada
+                          </button>
+                          <button onClick={() => setProdutoParaAjuste(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                            Ajustar
+                          </button>
+                          <button onClick={() => setProdutoHistorico(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                            Histórico
+                          </button>
+                          <button onClick={() => setProdutoParaEditar(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                            Editar
+                          </button>
+                          <button onClick={() => excluirProduto(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400">
+                            Excluir
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => setProdutoHistorico(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                            Histórico
+                          </button>
+                          <button onClick={() => reativarProduto(produto)} className="rounded-lg border border-tenant px-3 py-1.5 text-xs font-medium text-tenant hover:bg-tenant-soft">
+                            Reativar
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -282,6 +361,18 @@ export function EstoqueScreen() {
           }}
         />
       )}
+
+      {produtoParaAjuste && (
+        <AjusteEstoqueModal
+          produto={produtoParaAjuste}
+          aoFechar={() => setProdutoParaAjuste(null)}
+          aoConfirmar={(novaQuantidade, motivo) => confirmarAjuste(produtoParaAjuste, novaQuantidade, motivo)}
+        />
+      )}
+
+      {produtoHistorico && <HistoricoProdutoModal produto={produtoHistorico} aoFechar={() => setProdutoHistorico(null)} />}
+
+      {mostrarCategorias && <CategoriasModal categorias={categorias} aoMudar={setCategorias} aoFechar={() => setMostrarCategorias(false)} />}
 
       {mostrarSugestao && (
         <SugestaoReposicaoModal

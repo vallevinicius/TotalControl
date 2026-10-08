@@ -71,12 +71,16 @@ model Empresa {
   /// Fim do período já pago: até essa data o acesso continua, mesmo cancelada.
   acessoAte        DateTime?
   canceladaEm      DateTime?
+  /// A conta principal recebe avisos por e-mail (teste acabando, pagamento recusado,
+  /// estoque baixo, contas vencendo). Desligável na tela Empresa.
+  avisosEmail      Boolean   @default(true)
   /// Empresa suspensa pela Total Software (ex: inadimplência, abuso) —
   /// ninguém de nenhuma loja dela consegue logar enquanto estiver false.
   ativo         Boolean   @default(true)
   criadoEm      DateTime  @default(now())
 
   lojas Tenant[]
+  avisosEnviados AvisoEnviado[]
 }
 
 model Tenant {
@@ -122,6 +126,7 @@ model Tenant {
   vendedores            Vendedor[]
   acessosExtras         AcessoLoja[]
   registrosAuditoria    RegistroAuditoria[]
+  movimentacoesEstoque  MovimentacaoEstoque[]
 
   @@index([empresaId])
 }
@@ -210,6 +215,7 @@ model Produto {
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   categoria      Categoria       @relation(fields: [categoriaId], references: [id])
   itensTransacao ItemTransacao[]
+  movimentacoes  MovimentacaoEstoque[]
 
   @@unique([tenantId, sku])
   @@index([categoriaId])
@@ -303,7 +309,13 @@ model LancamentoFinanceiro {
   categoria  String
   descricao  String?
   valor      Decimal                  @db.Decimal(12, 2)
+  /// Data em que o valor ENTRA no caixa/resultado: a do lançamento avulso, ou, numa
+  /// conta a pagar/receber, o vencimento enquanto aberta e a data do pagamento depois de baixada.
   data       DateTime
+  /// Preenchido nas contas a pagar/receber (lançamentos com vencimento). Conta aberta
+  /// (sem `pagoEm`) não entra no resultado do período até ser baixada.
+  vencimento DateTime?
+  pagoEm     DateTime?
   usuarioId  String
   criadoEm   DateTime                 @default(now())
 
@@ -311,6 +323,7 @@ model LancamentoFinanceiro {
   usuario Usuario @relation(fields: [usuarioId], references: [id])
 
   @@index([tenantId, data])
+  @@index([tenantId, vencimento])
 }
 
 /// Um turno de caixa: abre com um valor inicial em dinheiro, acumula as
@@ -401,4 +414,50 @@ model TokenSenha {
   usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
 
   @@index([usuarioId])
+}
+
+enum TipoMovimentacaoEstoque {
+  INICIAL
+  ENTRADA
+  VENDA
+  ESTORNO
+  AJUSTE
+}
+
+/// Livro-razão do estoque: cada vez que o saldo de um produto muda, uma linha com
+/// quanto mudou, o saldo depois e por quê. É o que responde "por que o estoque
+/// está assim?". Começa a valer a partir da sua criação (não reconstrói o passado).
+model MovimentacaoEstoque {
+  id         String                  @id @default(uuid())
+  tenantId   String
+  produtoId  String
+  tipo       TipoMovimentacaoEstoque
+  /// Variação do saldo: positiva entra, negativa sai.
+  quantidade Int
+  saldoApos  Int
+  motivo     String?
+  usuarioId  String?
+  /// Venda (Transacao) ou outro registro que originou o movimento.
+  referenciaId String?
+  criadoEm   DateTime                @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  produto Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@index([produtoId, criadoEm])
+  @@index([tenantId, criadoEm])
+}
+
+/// Controle de duplicidade dos avisos por e-mail: o mesmo aviso (tipo + chave) sai uma vez só por empresa.
+model AvisoEnviado {
+  id        String   @id @default(uuid())
+  empresaId String
+  tipo      String
+  /// Identifica a "ocorrência" (ex: data do fim do teste, semana do ano).
+  chave     String
+  enviadoEm DateTime @default(now())
+
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@unique([empresaId, tipo, chave])
 }

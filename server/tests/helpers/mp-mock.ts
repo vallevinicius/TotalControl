@@ -13,6 +13,7 @@ export interface AssinaturaFalsa {
 
 export function iniciarMercadoPagoFalso() {
   const assinaturas = new Map<string, AssinaturaFalsa>();
+  const cobrancas = new Map<string, Array<Record<string, unknown>>>();
   let n = 0;
   const ler = (req: http.IncomingMessage) =>
     new Promise<Record<string, any>>((resolve) => {
@@ -36,6 +37,10 @@ export function iniciarMercadoPagoFalso() {
       assinaturas.set(id, a);
       return enviar(201, a);
     }
+    if (req.method === 'GET' && url.pathname === '/authorized_payments/search') {
+      const id = url.searchParams.get('preapproval_id')!;
+      return enviar(200, { results: cobrancas.get(id) ?? [] });
+    }
     const m = url.pathname.match(/^\/preapproval\/(.+)$/);
     if (m && req.method === 'GET') return assinaturas.has(m[1]) ? enviar(200, assinaturas.get(m[1])) : enviar(404, { message: 'não encontrada' });
     if (m && req.method === 'PUT') {
@@ -49,6 +54,7 @@ export function iniciarMercadoPagoFalso() {
 
   return {
     assinaturas,
+    cobrancas,
     abrir: () => new Promise<void>((ok) => servidor.listen(4998, ok)),
     fechar: () => new Promise<void>((ok) => servidor.close(() => ok())),
     /** O cliente pagou no checkout: a assinatura passa a "authorized". */

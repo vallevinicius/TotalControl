@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import { formatarMoeda, formatarFormaPagamento } from '@/utils/formatters';
+import { imprimir } from '@/utils/imprimir';
 import type { FormaPagamento } from '@/types';
 
 export interface DadosComprovante {
@@ -165,7 +166,7 @@ export function ComprovanteModal({ dados, aoFechar }: { dados: DadosComprovante;
             </a>
           </div>
           <div className="flex justify-end gap-3">
-            <button onClick={() => window.print()} className="rounded-lg border border-ink-600 px-4 py-2 text-sm font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+            <button onClick={() => imprimir('comprovante')} className="rounded-lg border border-ink-600 px-4 py-2 text-sm font-medium text-ink-200 hover:border-tenant hover:text-tenant">
               Imprimir
             </button>
             <button onClick={aoFechar} autoFocus className="rounded-lg bg-tenant px-4 py-2 text-sm font-semibold text-tenant-foreground hover:opacity-90">

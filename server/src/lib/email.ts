@@ -81,3 +81,32 @@ export function emailSenhaAlterada(nome: string): Omit<EmailParaEnviar, 'para'> 
     html: modelo('Senha alterada', [`Olá, ${nome}.`, 'A senha da sua conta foi alterada agora.', 'Se não foi você, redefina a senha imediatamente pela tela de login ("Esqueci minha senha") e avise o responsável pela sua loja.']),
   };
 }
+
+export function emailContaExcluida(nome: string, empresa: string): Omit<EmailParaEnviar, 'para'> {
+  return {
+    assunto: 'Sua conta do Total Control foi excluída',
+    texto: `Olá, ${nome}.\n\nConfirmamos a exclusão da conta "${empresa}" e de todos os dados dela (lojas, produtos, vendas, clientes, financeiro e usuários), a pedido do responsável. A assinatura foi cancelada e não haverá novas cobranças.\n\nSe você não fez esse pedido, responda a este e-mail imediatamente.`,
+    html: modelo('Conta excluída', [`Olá, ${nome}.`, `Confirmamos a exclusão da conta "${empresa}" e de todos os dados dela (lojas, produtos, vendas, clientes, financeiro e usuários), a pedido do responsável.`, 'A assinatura foi cancelada e não haverá novas cobranças.', 'Se você não fez esse pedido, responda a este e-mail imediatamente.']),
+  };
+}
+
+export function emailConvite(nome: string, convidadoPor: string, loja: string, link: string): Omit<EmailParaEnviar, 'para'> {
+  return {
+    assunto: `${convidadoPor} convidou você para o Total Control`,
+    texto: `Olá, ${nome}.\n\n${convidadoPor} criou um acesso para você no Total Control, na loja ${loja}. Para entrar, crie a sua senha pelo link abaixo (vale por 3 dias):\n\n${link}\n\nDepois é só entrar com este e-mail e a senha que você escolher.`,
+    html: modelo('Você foi convidado', [`Olá, ${nome}.`, `${convidadoPor} criou um acesso para você no Total Control, na loja ${loja}.`, 'Crie a sua senha pelo botão abaixo (o link vale por 3 dias). Depois é só entrar com este e-mail e a senha que você escolher.'], { texto: 'Criar minha senha', url: link }),
+  };
+}
+
+/** E-mail de aviso simples (um título, parágrafos, uma lista opcional e um botão). */
+export function emailAviso(assunto: string, titulo: string, paragrafos: string[], opcoes: { lista?: string[]; botao?: { texto: string; url: string } } = {}): Omit<EmailParaEnviar, 'para'> {
+  const lista = opcoes.lista ?? [];
+  return {
+    assunto,
+    texto: `${titulo}\n\n${paragrafos.join('\n\n')}${lista.length ? `\n\n${lista.map((l) => `- ${l}`).join('\n')}` : ''}${opcoes.botao ? `\n\n${opcoes.botao.texto}: ${opcoes.botao.url}` : ''}\n\nPara parar de receber estes avisos, desligue-os em Empresa > Avisos por e-mail.`,
+    html: modelo(titulo, paragrafos, opcoes.botao).replace(
+      '<p style="font-size:12px;color:#888;margin-top:32px">',
+      `${lista.length ? `<ul style="line-height:1.6">${lista.map((l) => `<li>${escapar(l)}</li>`).join('')}</ul>` : ''}<p style="font-size:12px;color:#888;margin-top:32px">Para parar de receber estes avisos, desligue-os em Empresa &gt; Avisos por e-mail.<br>`,
+    ),
+  };
+}

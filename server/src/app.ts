@@ -57,6 +57,7 @@ app.post('/api/auth/refresh', limiteRefresh);
 app.post('/api/auth/esqueci-senha', limiteEsqueciSenha);
 app.post('/api/auth/redefinir-senha', limiteRedefinirSenha);
 app.post('/api/auth/alterar-senha', limiteRedefinirSenha);
+app.delete('/api/tenant/conta', limiteRedefinirSenha);
 app.post('/api/admin/login', limiteLoginAdmin);
 app.post('/api/admin/login/2fa', limiteCodigoAdmin);
 app.post('/api/assinatura/webhook', limiteWebhook);

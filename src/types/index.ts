@@ -77,6 +77,8 @@ export interface Tenant {
   assinatura?: ResumoAssinaturaTenant;
   /** Por que o acesso acabou (teste grátis ou assinatura vencida); ausente se está liberado. */
   acessoExpirado?: 'TRIAL' | 'ASSINATURA';
+  /** A conta principal recebe avisos por e-mail (teste, pagamento, estoque, contas). */
+  avisosEmail?: boolean;
   /** Data em que o teste grátis expira (independe do plano — hoje o cadastro
    * self-service já entra em STARTER com trial). Ausente fora do trial. */
   trialExpiraEm?: string; // ISO date
@@ -320,8 +322,36 @@ export interface LancamentoFinanceiro {
   descricao?: string;
   valor: number;
   data: string;
+  /** Só nas contas a pagar/receber. */
+  vencimento?: string;
+  pagoEm?: string;
+  situacao?: 'ABERTA' | 'ATRASADA' | 'PAGA';
   usuarioId: string;
   criadoEm: string;
+}
+
+/** Totais das contas em aberto. */
+export interface ResumoContas {
+  aPagar: number;
+  aReceber: number;
+  atrasadas: { quantidade: number; valor: number };
+  proximos7Dias: { quantidade: number; valor: number };
+}
+
+/** Resultado do período (DRE simplificada). */
+export interface Dre {
+  vendasBrutas: number;
+  descontos: number;
+  taxasCobradas: number;
+  receitaDeVendas: number;
+  custoMercadorias: number;
+  lucroBruto: number;
+  margemBruta: number;
+  despesas: Array<{ categoria: string; valor: number }>;
+  totalDespesas: number;
+  outrasReceitas: Array<{ categoria: string; valor: number }>;
+  totalOutrasReceitas: number;
+  resultado: number;
 }
 
 /** Resumo de fluxo de caixa consumido pela tela Financeiro. */
@@ -503,4 +533,59 @@ export interface AssinaturaResumo {
   precos: { STARTER: number; PRO: number };
   /** false enquanto o Mercado Pago não estiver configurado no servidor. */
   pagamentoDisponivel: boolean;
+}
+
+/** Uma mensalidade da assinatura, como o Mercado Pago a registra. */
+export interface CobrancaAssinatura {
+  id: string;
+  /** scheduled (agendada) | processed (processada) | recycling (nova tentativa) | cancelled */
+  status: string;
+  valor: number;
+  data: string;
+  /** approved | rejected | pending... quando a cobrança já foi tentada. */
+  statusDoPagamento?: string;
+}
+
+export type TipoMovimentacaoEstoque = 'INICIAL' | 'ENTRADA' | 'VENDA' | 'ESTORNO' | 'AJUSTE';
+
+/** Uma linha do histórico de estoque de um produto. */
+export interface MovimentacaoEstoque {
+  id: string;
+  tipo: TipoMovimentacaoEstoque;
+  /** Variação do saldo: positiva entrou, negativa saiu. */
+  quantidade: number;
+  saldoApos: number;
+  motivo?: string;
+  usuarioNome?: string;
+  criadoEm: string;
+}
+
+export interface PontoDeVendas {
+  /** AAAA-MM-DD, no fuso da loja. */
+  data: string;
+  faturamento: number;
+  vendas: number;
+}
+
+export interface CurvaAbcItem {
+  productId: string;
+  nome: string;
+  quantidade: number;
+  receita: number;
+  /** % do faturamento do período. */
+  participacao: number;
+  /** % acumulado até este produto. */
+  acumulado: number;
+  classe: 'A' | 'B' | 'C';
+}
+
+export interface CurvaAbc {
+  total: number;
+  itens: CurvaAbcItem[];
+}
+
+export interface EstoqueParado {
+  dias: number;
+  valorTotal: number;
+  itens: Array<{ productId: string; nome: string; sku: string; quantidade: number; valorParado: number }>;
 }

@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireContaPrincipal } from '../middleware/contaPrincipal.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
+import { avisarPagamentoRecusado } from '../lib/avisos.js';
 import { PRECOS_MENSAIS, motivoAcessoExpirado, planoAssinavel, type PlanoAssinavel } from '../config/planos.js';
 import {
   ErroMercadoPago,
@@ -12,6 +13,7 @@ import {
   buscarAssinatura,
   cancelarAssinatura,
   criarAssinatura,
+  listarCobrancas,
   mercadoPagoConfigurado,
 } from '../lib/mercadopago.js';
 
@@ -76,6 +78,8 @@ export async function sincronizarAssinatura(mpId: string): Promise<void> {
     });
   } else if (mp.status === 'paused') {
     await prisma.empresa.update({ where: { id: empresa.id }, data: { assinaturaStatus: 'PAUSADA' } });
+    // Só avisa na virada (a notificação pode chegar repetida).
+    if (empresa.assinaturaStatus !== 'PAUSADA') avisarPagamentoRecusado(empresa.id).catch(() => undefined);
   } else if (mp.status === 'cancelled' && empresa.assinaturaStatus !== 'CANCELADA') {
     await prisma.empresa.update({
       where: { id: empresa.id },
@@ -165,6 +169,20 @@ assinaturaRouter.post('/sincronizar', async (req, res) => {
     throw e;
   }
   res.json(resumo((await carregarEmpresa(req.usuario!.tenantId))!));
+});
+
+/** Histórico de cobranças da assinatura (da mais recente para a mais antiga).
+ * Vem direto do Mercado Pago; sem assinatura ou sem Mercado Pago, lista vazia. */
+assinaturaRouter.get('/cobrancas', async (req, res) => {
+  const empresa = await carregarEmpresa(req.usuario!.tenantId);
+  if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+  if (!empresa.mpAssinaturaId || !mercadoPagoConfigurado()) return res.json([]);
+  try {
+    res.json(await listarCobrancas(empresa.mpAssinaturaId));
+  } catch (e) {
+    if (e instanceof ErroMercadoPago) return res.status(e.status).json({ erro: e.message });
+    throw e;
+  }
 });
 
 const checkoutSchema = z.object({ plano: z.string() });

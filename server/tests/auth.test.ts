@@ -197,3 +197,65 @@ async function vi_esperar(condicao: () => boolean, ms = 3000) {
   while (!condicao() && Date.now() < limite) await new Promise((r) => setTimeout(r, 25));
   if (!condicao()) throw new Error('condição não ocorreu a tempo');
 }
+
+describe('convite de funcionário por e-mail', () => {
+  it('cria o login sem senha, envia o link, e a pessoa define a própria senha', async () => {
+    const { dono } = await criarEmpresa();
+    const { auth } = await entrar(dono.email);
+    const email = emailUnico();
+
+    const r = await request(app).post('/api/usuarios').set(auth).send({ nome: 'Convidada', email, convidarPorEmail: true, papel: 'GERENTE', permissoes: ['pdv'] });
+    expect(r.status).toBe(201);
+    expect(r.body.conviteEnviado).toBe(true);
+    await vi_esperar(() => caixaDeSaidaDeTeste.some((m) => m.para === email));
+    const mail = caixaDeSaidaDeTeste.find((m) => m.para === email)!;
+    expect(mail.assunto).toMatch(/convidou você/);
+    const token = mail.texto.match(/token=([\w-]+)/)![1];
+
+    // Sem o link, ninguém entra (a senha inicial é aleatória).
+    expect((await request(app).post('/api/auth/login').send({ email, senha: 'Qualquer@123' })).status).toBe(401);
+    expect((await request(app).post('/api/auth/redefinir-senha').send({ token, senha: 'MinhaSenha@1' })).status).toBe(200);
+    expect((await request(app).post('/api/auth/login').send({ email, senha: 'MinhaSenha@1' })).status).toBe(200);
+  });
+
+  it('sem convite, a senha continua obrigatória', async () => {
+    const { dono } = await criarEmpresa();
+    const { auth } = await entrar(dono.email);
+    const r = await request(app).post('/api/usuarios').set(auth).send({ nome: 'Sem senha', email: emailUnico(), papel: 'OPERADOR_CAIXA' });
+    expect(r.status).toBe(400);
+  });
+});
+
+describe('administrador redefine a senha de um funcionário', () => {
+  it('gera uma senha temporária que funciona e derruba as sessões dele', async () => {
+    const { dono, loja } = await criarEmpresa();
+    const op = await criarUsuario(loja.id, 'OPERADOR_CAIXA');
+    const sessaoOp = await entrar(op.email);
+    const { auth } = await entrar(dono.email);
+
+    const r = await request(app).post(`/api/usuarios/${op.id}/resetar-senha`).set(auth);
+    expect(r.status).toBe(200);
+    expect((await request(app).get('/api/auth/me').set(sessaoOp.auth)).status).toBe(401);
+    expect((await request(app).post('/api/auth/login').send({ email: op.email, senha: r.body.senhaTemporaria })).status).toBe(200);
+  });
+
+  it('não redefine a conta principal, a própria senha, nem a de outro admin sendo só admin', async () => {
+    const { dono, loja } = await criarEmpresa();
+    const admin2 = await criarUsuario(loja.id, 'ADMIN');
+    const admin3 = await criarUsuario(loja.id, 'ADMIN');
+    const donoSessao = await entrar(dono.email);
+    const admin2Sessao = await entrar(admin2.email);
+
+    expect((await request(app).post(`/api/usuarios/${dono.id}/resetar-senha`).set(admin2Sessao.auth)).status).toBe(403); // conta principal
+    expect((await request(app).post(`/api/usuarios/${admin3.id}/resetar-senha`).set(admin2Sessao.auth)).status).toBe(403); // admin por admin
+    expect((await request(app).post(`/api/usuarios/${admin2.id}/resetar-senha`).set(admin2Sessao.auth)).status).toBe(400); // a própria
+    expect((await request(app).post(`/api/usuarios/${admin3.id}/resetar-senha`).set(donoSessao.auth)).status).toBe(200); // a principal pode
+  });
+
+  it('funcionário comum não redefine ninguém', async () => {
+    const { loja } = await criarEmpresa();
+    const a = await criarUsuario(loja.id, 'GERENTE');
+    const b = await criarUsuario(loja.id, 'OPERADOR_CAIXA');
+    expect((await request(app).post(`/api/usuarios/${b.id}/resetar-senha`).set((await entrar(a.email)).auth)).status).toBe(403);
+  });
+});

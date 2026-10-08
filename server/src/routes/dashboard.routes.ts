@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { contarProdutosComEstoqueBaixo } from '../lib/estoque.js';
+import { diaNoFuso, ultimosDias } from '../lib/datas.js';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth, requerirTela(['dashboard', 'estoque', 'pdv']));
@@ -55,4 +56,27 @@ dashboardRouter.get('/resumo', async (req, res) => {
     produtosMaisVendidos,
     produtosComEstoqueBaixo,
   });
+});
+
+/** Faturamento e número de vendas por dia nos últimos N dias (padrão 14), no fuso da loja. */
+dashboardRouter.get('/serie', requerirTela(['dashboard']), async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const dias = Math.min(60, Math.max(2, Math.trunc(Number(req.query.dias)) || 14));
+  const loja = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { fusoHorario: true } });
+  const fuso = loja?.fusoHorario ?? 'America/Sao_Paulo';
+
+  const lista = ultimosDias(dias, fuso);
+  // Folga de 1 dia pra trás: o corte exato depende do fuso; o filtro final é por dia local.
+  const desde = new Date(Date.now() - (dias + 1) * 86_400_000);
+  const vendas = await prisma.transacao.findMany({ where: { tenantId, tipo: 'SAIDA', timestamp: { gte: desde } }, select: { timestamp: true, valorTotal: true } });
+
+  const porDia = new Map(lista.map((d) => [d, { data: d, faturamento: 0, vendas: 0 }]));
+  for (const v of vendas) {
+    const ponto = porDia.get(diaNoFuso(v.timestamp, fuso));
+    if (ponto) {
+      ponto.faturamento += Number(v.valorTotal);
+      ponto.vendas += 1;
+    }
+  }
+  res.json([...porDia.values()].map((p) => ({ ...p, faturamento: Number(p.faturamento.toFixed(2)) })));
 });

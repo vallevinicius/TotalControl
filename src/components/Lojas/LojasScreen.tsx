@@ -8,6 +8,7 @@ import { useConfirm } from '@/contexts/ConfirmContext';
 import { definirLojaAtiva, listarLojas } from '@/services/apiService';
 import { planoPermiteMultiLoja } from '@/utils/planos';
 import { formatarMoeda } from '@/utils/formatters';
+import { GraficoBarras } from '@/components/Common/GraficoBarras';
 import type { LojaGestao } from '@/types';
 import { LojaFormModal } from './LojaFormModal';
 import { AcessosLojaModal } from './AcessosLojaModal';
@@ -106,6 +107,19 @@ export function LojasScreen() {
       {!lojas ? (
         <LoadingState mensagem="Carregando lojas…" />
       ) : (
+        <>
+        {lojas.filter((l) => l.ativo).length > 1 && (
+          <div className="mb-6 rounded-xl border border-ink-700 bg-ink-800 p-6">
+            <p className="font-display text-base font-semibold text-ink-100">Faturamento do mês por loja</p>
+            <p className="mb-4 mt-0.5 text-xs text-ink-500">Comparativo das lojas ativas neste mês.</p>
+            <GraficoBarras
+              destacarUltimo={false}
+              pontos={lojas
+                .filter((l) => l.ativo)
+                .map((l) => ({ rotulo: l.nomeFantasia, valor: l.indicadores.faturamentoDoMes, descricao: `${l.nomeFantasia}: ${formatarMoeda(l.indicadores.faturamentoDoMes, tenant)} em ${l.indicadores.vendasDoMes} venda(s)` }))}
+            />
+          </div>
+        )}
         <div className="grid gap-5 xl:grid-cols-2">
           {lojas.map((loja) => (
             <div key={loja.id} className={['rounded-xl border bg-ink-800 p-5', loja.atual ? 'border-tenant/50' : 'border-ink-700', loja.ativo ? '' : 'opacity-80'].join(' ')}>
@@ -148,6 +162,7 @@ export function LojasScreen() {
             </div>
           ))}
         </div>
+        </>
       )}
 
       {criando && <LojaFormModal onFechar={() => setCriando(false)} onSalva={() => { setCriando(false); depoisDeSalvar(); }} />}

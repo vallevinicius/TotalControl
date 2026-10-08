@@ -26,6 +26,13 @@ import type {
   AcessoDaLoja,
   UsuarioDaEmpresa,
   AssinaturaResumo,
+  CobrancaAssinatura,
+  MovimentacaoEstoque,
+  ResumoContas,
+  PontoDeVendas,
+  CurvaAbc,
+  EstoqueParado,
+  Dre,
   FormaPagamento,
   AtributoCustomizadoDefinicao,
   AtributoCustomizadoValor,
@@ -459,8 +466,44 @@ export async function listarUsuariosDaEmpresa(): Promise<UsuarioDaEmpresa[]> {
 }
 
 // ----------------------------------------------------------------------------
+// DADOS DA EMPRESA E LGPD (tela Empresa, só a conta principal)
+// ----------------------------------------------------------------------------
+
+/** Edita os dados cadastrais da própria empresa (loja atual), em qualquer plano. */
+export async function editarDadosDaEmpresa(dados: EdicaoLojaPayload): Promise<void> {
+  await requisitar('/tenant/dados', { method: 'PUT', body: JSON.stringify(dados) });
+}
+
+/** Liga ou desliga os avisos por e-mail da empresa. */
+export async function definirAvisosPorEmail(ativo: boolean): Promise<void> {
+  await requisitar('/tenant/avisos', { method: 'PUT', body: JSON.stringify({ ativo }) });
+}
+
+/** Tudo o que a empresa guarda no sistema, em JSON (texto) pronto para baixar. */
+export async function exportarDadosDaEmpresa(): Promise<string> {
+  const token = getToken();
+  const resposta = await fetch(`${API_URL}/tenant/exportar`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (resposta.status === 401 && (await renovarSessao())) return exportarDadosDaEmpresa();
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new ErroApi(corpo?.erro ?? 'Não foi possível exportar os dados.', resposta.status);
+  }
+  return resposta.text();
+}
+
+/** Exclui a EMPRESA inteira e todos os dados dela. Sem volta. */
+export async function excluirContaDaEmpresa(confirmacao: { senha: string; cnpj: string }): Promise<void> {
+  await requisitar('/tenant/conta', { method: 'DELETE', body: JSON.stringify(confirmacao) });
+}
+
+// ----------------------------------------------------------------------------
 // ASSINATURA (Mercado Pago) — tela Meu plano
 // ----------------------------------------------------------------------------
+
+/** Histórico de cobranças da assinatura, direto do Mercado Pago. */
+export async function getCobrancas(): Promise<CobrancaAssinatura[]> {
+  return requisitar('/assinatura/cobrancas');
+}
 
 export async function getAssinatura(): Promise<AssinaturaResumo> {
   return requisitar('/assinatura');
@@ -490,8 +533,31 @@ export interface RespostaProdutos extends PaginaResultado<Produto> {
 
 /** Busca produtos com paginação; `termo` vazio traz a lista inteira (usado
  * tanto pela tela de Estoque quanto pela busca ao vivo do PDV). */
-export async function searchProducts(termo: string, pagina = 1, tamanho = 20): Promise<RespostaProdutos> {
-  return requisitar(`/produtos?q=${encodeURIComponent(termo)}&pagina=${pagina}&tamanho=${tamanho}`);
+export async function searchProducts(termo: string, pagina = 1, tamanho = 20, inativos = false): Promise<RespostaProdutos> {
+  return requisitar(`/produtos?q=${encodeURIComponent(termo)}&pagina=${pagina}&tamanho=${tamanho}${inativos ? '&inativos=1' : ''}`);
+}
+
+/** Todos os produtos ativos (percorre as páginas), pra exportar. */
+export async function getTodosOsProdutos(): Promise<Produto[]> {
+  const todos: Produto[] = [];
+  for (let pagina = 1; ; pagina++) {
+    const r = await searchProducts('', pagina, 100);
+    todos.push(...r.itens);
+    if (pagina >= r.totalPaginas) return todos;
+  }
+}
+
+export async function setProdutoAtivo(id: string, ativo: boolean): Promise<Produto> {
+  return requisitar(`/produtos/${id}/ativo`, { method: 'PATCH', body: JSON.stringify({ ativo }) });
+}
+
+/** Ajuste de inventário: leva o saldo para a contagem real, sempre com motivo. */
+export async function ajustarEstoque(productId: string, novaQuantidade: number, motivo: string): Promise<{ quantidadeEmEstoque: number; diferenca: number }> {
+  return requisitar('/estoque/ajuste', { method: 'POST', body: JSON.stringify({ productId, novaQuantidade, motivo }) });
+}
+
+export async function getMovimentacoesDoProduto(id: string, pagina = 1): Promise<PaginaResultado<MovimentacaoEstoque>> {
+  return requisitar(`/produtos/${id}/movimentacoes?pagina=${pagina}&tamanho=15`);
 }
 
 export async function getSugestaoReposicao(): Promise<SugestaoReposicao[]> {
@@ -540,6 +606,14 @@ export async function createCategoria(
   return requisitar('/categorias', { method: 'POST', body: JSON.stringify({ nome, atributosCustomizados }) });
 }
 
+export async function renomearCategoria(id: string, nome: string): Promise<Categoria> {
+  return requisitar(`/categorias/${id}`, { method: 'PUT', body: JSON.stringify({ nome }) });
+}
+
+export async function excluirCategoria(id: string): Promise<void> {
+  await requisitar(`/categorias/${id}`, { method: 'DELETE' });
+}
+
 // ----------------------------------------------------------------------------
 // CLIENTES
 // ----------------------------------------------------------------------------
@@ -561,6 +635,10 @@ export interface NovoClientePayload {
 
 export async function createCliente(dados: NovoClientePayload): Promise<Cliente> {
   return requisitar('/clientes', { method: 'POST', body: JSON.stringify(dados) });
+}
+
+export async function importarClientes(clientes: NovoClientePayload[]): Promise<{ criados: number; ignorados: number }> {
+  return requisitar('/clientes/importar', { method: 'POST', body: JSON.stringify({ clientes }) });
 }
 
 /** Na edição, campo enviado como "" apaga o valor guardado. */
@@ -627,6 +705,22 @@ export async function getDashboardResumo(): Promise<ResumoDashboard> {
   return requisitar('/dashboard/resumo');
 }
 
+export async function getSerieDoDashboard(dias = 14): Promise<PontoDeVendas[]> {
+  return requisitar(`/dashboard/serie?dias=${dias}`);
+}
+
+export async function getSerieDiaria(inicio: string, fim: string): Promise<PontoDeVendas[]> {
+  return requisitar(`/relatorios/serie-diaria?inicio=${inicio}&fim=${fim}`);
+}
+
+export async function getCurvaAbc(inicio: string, fim: string): Promise<CurvaAbc> {
+  return requisitar(`/relatorios/curva-abc?inicio=${inicio}&fim=${fim}`);
+}
+
+export async function getEstoqueParado(dias = 30): Promise<EstoqueParado> {
+  return requisitar(`/relatorios/estoque-parado?dias=${dias}`);
+}
+
 export async function getRelatorioVendas(inicio?: string, fim?: string): Promise<RelatorioVendas> {
   const parametros = new URLSearchParams();
   if (inicio) parametros.set('inicio', inicio);
@@ -674,6 +768,44 @@ export async function createLancamento(payload: NovoLancamentoPayload): Promise<
   return requisitar('/financeiro/lancamentos', { method: 'POST', body: JSON.stringify(payload) });
 }
 
+export interface NovaContaPayload {
+  tipo: TipoLancamentoFinanceiro;
+  categoria: string;
+  descricao?: string;
+  valor: number;
+  /** YYYY-MM-DD */
+  vencimento: string;
+  /** Quantas mensalidades gerar (1 = conta única). */
+  parcelas?: number;
+}
+
+export async function criarConta(payload: NovaContaPayload): Promise<{ criadas: number }> {
+  return requisitar('/financeiro/contas', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function getContas(situacao: 'abertas' | 'pagas' | 'todas', tipo?: TipoLancamentoFinanceiro): Promise<LancamentoFinanceiro[]> {
+  return requisitar(`/financeiro/contas?situacao=${situacao}${tipo ? `&tipo=${tipo}` : ''}`);
+}
+
+export async function getResumoContas(): Promise<ResumoContas> {
+  return requisitar('/financeiro/contas/resumo');
+}
+
+export async function baixarConta(id: string, pagoEm?: string): Promise<LancamentoFinanceiro> {
+  return requisitar(`/financeiro/contas/${id}/baixa`, { method: 'PATCH', body: JSON.stringify({ pagoEm }) });
+}
+
+export async function reabrirConta(id: string): Promise<LancamentoFinanceiro> {
+  return requisitar(`/financeiro/contas/${id}/reabrir`, { method: 'PATCH' });
+}
+
+export async function getDre(inicio?: string, fim?: string): Promise<Dre> {
+  const params = new URLSearchParams();
+  if (inicio) params.set('inicio', inicio);
+  if (fim) params.set('fim', fim);
+  return requisitar(`/financeiro/dre?${params.toString()}`);
+}
+
 export async function deleteLancamento(id: string): Promise<void> {
   await requisitar(`/financeiro/lancamentos/${id}`, { method: 'DELETE' });
 }
@@ -689,12 +821,21 @@ export async function getUsuarios(): Promise<Usuario[]> {
 export interface NovoUsuarioPayload {
   nome: string;
   email: string;
-  senha: string;
+  /** Obrigatória, a menos que seja um convite por e-mail. */
+  senha?: string;
+  /** A pessoa recebe um link por e-mail e cria a própria senha (o e-mail precisa ser real). */
+  convidarPorEmail?: boolean;
   papel: 'ADMIN' | 'GERENTE' | 'OPERADOR_CAIXA';
   permissoes: TelaComPermissao[];
 }
 
-export async function createUsuario(dados: NovoUsuarioPayload): Promise<Usuario> {
+/** Gera uma senha temporária para um funcionário que perdeu o acesso (aparece uma única vez). */
+export async function resetarSenhaDeUsuario(id: string): Promise<string> {
+  const { senhaTemporaria } = await requisitar<{ senhaTemporaria: string }>(`/usuarios/${id}/resetar-senha`, { method: 'POST' });
+  return senhaTemporaria;
+}
+
+export async function createUsuario(dados: NovoUsuarioPayload): Promise<Usuario & { conviteEnviado?: boolean }> {
   return requisitar('/usuarios', { method: 'POST', body: JSON.stringify(dados) });
 }
 

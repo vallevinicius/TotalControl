@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useToast } from '@/contexts/ToastContext';
-import { criarLoja, editarLoja, type DadosLojaPayload } from '@/services/apiService';
+import { criarLoja, editarLoja, type DadosLojaPayload, type EdicaoLojaPayload } from '@/services/apiService';
 import { cnpjValido, mascararCep, mascararCnpj, mascararTelefone } from '@/utils/mascaras';
 import { TIPOS_EMPRESA, UFS } from '@/utils/empresa';
 import { FUSOS_BRASIL, consultarCep, consultarCnpj } from '@/utils/consultas';
@@ -44,11 +44,13 @@ function Titulo({ children }: { children: string }) {
 interface Props {
   /** Sem `loja` = criando uma nova; com `loja` = editando. */
   loja?: LojaGestao;
+  /** Quando informado, a edição usa esta função em vez de `editarLoja(id)` (ex: dados da própria empresa, em qualquer plano). */
+  salvarEdicao?: (dados: EdicaoLojaPayload) => Promise<void>;
   onFechar: () => void;
   onSalva: () => void;
 }
 
-export function LojaFormModal({ loja, onFechar, onSalva }: Props) {
+export function LojaFormModal({ loja, salvarEdicao, onFechar, onSalva }: Props) {
   const toast = useToast();
   const editando = Boolean(loja);
   const [f, setF] = useState<Formulario>(() => formularioDe(loja));
@@ -120,7 +122,8 @@ export function LojaFormModal({ loja, onFechar, onSalva }: Props) {
     setEnviando(true);
     try {
       if (loja) {
-        await editarLoja(loja.id, { ...dados, razaoSocial: dados.razaoSocial ?? '', fusoHorario: f.fusoHorario, exigirSenhaAoAbrirCaixa: f.exigirSenhaAoAbrirCaixa });
+        const edicao = { ...dados, razaoSocial: dados.razaoSocial ?? '', fusoHorario: f.fusoHorario, exigirSenhaAoAbrirCaixa: f.exigirSenhaAoAbrirCaixa };
+        await (salvarEdicao ? salvarEdicao(edicao) : editarLoja(loja.id, edicao));
         toast.sucesso('Loja atualizada.');
       } else {
         await criarLoja(dados);

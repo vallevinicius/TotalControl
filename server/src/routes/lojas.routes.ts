@@ -7,6 +7,7 @@ import { requireContaPrincipal } from '../middleware/contaPrincipal.js';
 import { requireFeaturePlano } from '../middleware/plano.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { normalizarCnpj } from '../lib/documentos.js';
+import { aplicarEdicaoDaLoja, editarLojaSchema } from '../lib/dadosLoja.js';
 import { operacoesExcluirLojas, usuarioComHistoricoEmOutraLoja } from '../lib/exclusao.js';
 
 export const lojasRouter = Router();
@@ -233,28 +234,6 @@ lojasRouter.get('/:tenantId', async (req, res) => {
   res.json({ ...resumirLoja(loja), atual: loja.id === req.usuario!.tenantId });
 });
 
-const texto = z.string().trim().max(191);
-const editarLojaSchema = z.object({
-  nomeFantasia: z.string().trim().min(2).max(191),
-  razaoSocial: texto.min(2),
-  cnpj: z.string().min(1),
-  inscricaoEstadual: texto.optional(),
-  inscricaoMunicipal: texto.optional(),
-  regimeTributario: texto.optional(),
-  telefone: texto.optional(),
-  email: z.string().trim().email().optional().or(z.literal('')),
-  site: texto.optional(),
-  cep: texto.optional(),
-  logradouro: texto.optional(),
-  numero: texto.optional(),
-  complemento: texto.optional(),
-  bairro: texto.optional(),
-  cidade: texto.optional(),
-  uf: z.string().trim().length(2).optional().or(z.literal('')),
-  fusoHorario: z.string().trim().min(3).max(64).optional(),
-  exigirSenhaAoAbrirCaixa: z.boolean().optional(),
-});
-
 /** Edita os dados cadastrais e operacionais de uma loja da empresa. Campos
  * de texto opcionais enviados vazios apagam o valor; campos omitidos ficam
  * como estão. */
@@ -266,40 +245,12 @@ lojasRouter.put('/:tenantId', async (req, res) => {
   if (!parse.success) {
     return res.status(400).json({ erro: 'Dados inválidos.', detalhes: parse.error.flatten() });
   }
-  const { cnpj: cnpjInformado, email, fusoHorario, exigirSenhaAoAbrirCaixa, ...resto } = parse.data;
 
-  const cnpj = normalizarCnpj(cnpjInformado);
-  if (!cnpj) return res.status(400).json({ erro: 'CNPJ inválido. Confira os números.' });
+  const r = await aplicarEdicaoDaLoja(loja, parse.data);
+  if (!r.ok) return res.status(r.status).json({ erro: r.erro });
 
-  if (cnpj !== loja.cnpj) {
-    const duplicado = await prisma.tenant.findUnique({ where: { cnpj } });
-    if (duplicado) return res.status(409).json({ erro: 'Já existe uma loja cadastrada com este CNPJ.' });
-  }
-
-  if (fusoHorario) {
-    try {
-      new Intl.DateTimeFormat('pt-BR', { timeZone: fusoHorario });
-    } catch {
-      return res.status(400).json({ erro: 'Fuso horário inválido.' });
-    }
-  }
-
-  // "" vira null (apaga o campo); undefined não mexe.
-  const dadosTexto = Object.fromEntries(Object.entries(resto).map(([k, v]) => [k, v === '' ? null : v]));
-
-  const atualizada = await prisma.tenant.update({
-    where: { id: loja.id },
-    data: {
-      ...dadosTexto,
-      email: email === '' ? null : email,
-      cnpj,
-      fusoHorario,
-      exigirSenhaAoAbrirCaixa,
-    },
-  });
-
-  await registrarAuditoria(loja.id, req.usuario!.id, 'loja.editar', atualizada.nomeFantasia);
-  res.json({ ...resumirLoja(atualizada), atual: atualizada.id === req.usuario!.tenantId });
+  await registrarAuditoria(loja.id, req.usuario!.id, 'loja.editar', r.loja.nomeFantasia);
+  res.json({ ...resumirLoja(r.loja), atual: r.loja.id === req.usuario!.tenantId });
 });
 
 const ativoSchema = z.object({ ativo: z.boolean() });

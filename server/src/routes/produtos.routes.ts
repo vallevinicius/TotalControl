@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { registrarMovimentacao } from '../lib/movimentacaoEstoque.js';
 import { verificarLimiteRecurso } from '../middleware/plano.js';
 import { contarProdutosComEstoqueBaixo } from '../lib/estoque.js';
 import { lerPaginacao, montarResposta } from '../lib/paginacao.js';
@@ -49,9 +50,11 @@ produtosRouter.get('/', async (req, res) => {
   const termo = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const { pagina, tamanho } = lerPaginacao(req.query);
 
+  // ?inativos=1 lista os produtos excluídos (inativados), pra poder reativá-los.
+  const inativos = req.query.inativos === '1';
   const where = {
     tenantId,
-    ativo: true,
+    ativo: !inativos,
     ...(termo ? { OR: [{ nome: { contains: termo } }, { sku: { contains: termo } }] } : {}),
   };
 
@@ -159,8 +162,10 @@ produtosRouter.post('/', async (req, res) => {
     return res.status(403).json(limiteExcedido);
   }
 
-  const produto = await prisma.produto.create({
-    data: { ...parse.data, tenantId },
+  const produto = await prisma.$transaction(async (tx) => {
+    const criado = await tx.produto.create({ data: { ...parse.data, tenantId } });
+    await registrarMovimentacao(tx, { tenantId, produtoId: criado.id, tipo: 'INICIAL', quantidade: criado.quantidadeEmEstoque, usuarioId: req.usuario!.id, motivo: 'Cadastro do produto' });
+    return criado;
   });
   res.status(201).json(serializarProduto(produto));
 });
@@ -227,7 +232,7 @@ produtosRouter.post('/importar', async (req, res) => {
         mapaCategorias.set(nome, nova.id);
       }
     }
-    return Promise.all(
+    const novos = await Promise.all(
       parse.data.produtos.map((p) =>
         tx.produto.create({
           data: {
@@ -243,13 +248,74 @@ produtosRouter.post('/importar', async (req, res) => {
         }),
       ),
     );
+    for (const produto of novos) {
+      await registrarMovimentacao(tx, { tenantId, produtoId: produto.id, tipo: 'INICIAL', quantidade: produto.quantidadeEmEstoque, usuarioId, motivo: 'Importação por planilha' });
+    }
+    return novos;
   });
 
   await registrarAuditoria(tenantId, usuarioId, 'produto.importarCsv', `${criados.length} produto(s)`);
   res.status(201).json({ criados: criados.length });
 });
 
-const produtoUpdateSchema = produtoSchema.partial();
+/** Histórico de movimentações do produto (entradas, vendas, estornos e ajustes), da mais nova para a mais antiga. */
+produtosRouter.get('/:id/movimentacoes', requerirTela(['estoque']), async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const produto = await prisma.produto.findFirst({ where: { id: req.params.id, tenantId } });
+  if (!produto) return res.status(404).json({ erro: 'Produto não encontrado.' });
+
+  const { pagina, tamanho } = lerPaginacao(req.query);
+  const where = { tenantId, produtoId: produto.id };
+  const [itens, total] = await Promise.all([
+    prisma.movimentacaoEstoque.findMany({ where, orderBy: { criadoEm: 'desc' }, skip: (pagina - 1) * tamanho, take: tamanho }),
+    prisma.movimentacaoEstoque.count({ where }),
+  ]);
+
+  // Nome de quem fez, pra não mostrar só um id.
+  const ids = [...new Set(itens.map((m) => m.usuarioId).filter((id): id is string => Boolean(id)))];
+  const usuarios = await prisma.usuario.findMany({ where: { id: { in: ids } }, select: { id: true, nome: true } });
+  const nomes = new Map(usuarios.map((u) => [u.id, u.nome]));
+
+  res.json(
+    montarResposta(
+      itens.map((m) => ({
+        id: m.id,
+        tipo: m.tipo,
+        quantidade: m.quantidade,
+        saldoApos: m.saldoApos,
+        motivo: m.motivo ?? undefined,
+        usuarioNome: m.usuarioId ? nomes.get(m.usuarioId) : undefined,
+        criadoEm: m.criadoEm.toISOString(),
+      })),
+      total,
+      pagina,
+      tamanho,
+    ),
+  );
+});
+
+/** Reativa um produto excluído (respeitando o limite de produtos do plano) ou o inativa. */
+produtosRouter.patch('/:id/ativo', requerirTela(['estoque']), async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const parse = z.object({ ativo: z.boolean() }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: 'Dados inválidos.' });
+
+  const produto = await prisma.produto.findFirst({ where: { id: req.params.id, tenantId } });
+  if (!produto) return res.status(404).json({ erro: 'Produto não encontrado.' });
+  if (produto.ativo === parse.data.ativo) return res.json(serializarProduto(produto));
+
+  if (parse.data.ativo) {
+    const limiteExcedido = await verificarLimiteRecurso(tenantId, 'produtos');
+    if (limiteExcedido) return res.status(403).json(limiteExcedido);
+  }
+  const atualizado = await prisma.produto.update({ where: { id: produto.id }, data: { ativo: parse.data.ativo } });
+  await registrarAuditoria(tenantId, req.usuario!.id, parse.data.ativo ? 'produto.reativar' : 'produto.inativar', produto.nome);
+  res.json(serializarProduto(atualizado));
+});
+
+// O saldo NÃO se edita aqui: ele só muda por entrada, ajuste (com motivo) ou venda,
+// pra o histórico de movimentações explicar sempre o número que está na tela.
+const produtoUpdateSchema = produtoSchema.omit({ quantidadeEmEstoque: true }).partial();
 
 produtosRouter.put('/:id', async (req, res) => {
   const { tenantId } = req.usuario!;

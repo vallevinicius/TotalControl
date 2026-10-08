@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTenant } from '@/contexts/TenantContext';
-import { getCaixaAtual, getDashboardResumo } from '@/services/apiService';
+import { getCaixaAtual, getDashboardResumo, getResumoContas } from '@/services/apiService';
 import { diasRestantesTrial } from '@/utils/planos';
 
 const HORAS_CAIXA_ABERTO_ALERTA = 8;
@@ -47,7 +47,7 @@ export function NotificationBell() {
           if (horasAberto >= HORAS_CAIXA_ABERTO_ALERTA) {
             lista.push({
               id: 'caixa-aberto',
-              mensagem: `Caixa aberto há ${Math.floor(horasAberto)}h | não esqueça de fechar`,
+              mensagem: `Caixa aberto há ${Math.floor(horasAberto)}h, não esqueça de fechar`,
               rota: '/pdv',
               urgente: true,
             });
@@ -55,6 +55,17 @@ export function NotificationBell() {
         }
       } catch {
         // idem
+      }
+
+      try {
+        const contas = await getResumoContas();
+        if (contas.atrasadas.quantidade > 0) {
+          lista.push({ id: 'contas-atrasadas', mensagem: `${contas.atrasadas.quantidade} conta(s) em atraso`, rota: '/financeiro/contas', urgente: true });
+        } else if (contas.proximos7Dias.quantidade > 0) {
+          lista.push({ id: 'contas-proximas', mensagem: `${contas.proximos7Dias.quantidade} conta(s) vencem nos próximos 7 dias`, rota: '/financeiro/contas' });
+        }
+      } catch {
+        // sem permissão no financeiro ou plano sem o módulo: não mostra
       }
 
       const dias = diasRestantesTrial(tenant?.trialExpiraEm);

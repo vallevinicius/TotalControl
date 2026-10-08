@@ -296,6 +296,7 @@ authRouter.get('/me', requireAuth, async (req, res) => {
         canceladaEm: tenant.empresa.canceladaEm?.toISOString() ?? undefined,
       },
       acessoExpirado: motivoAcessoExpirado(tenant.empresa) ?? undefined,
+      avisosEmail: tenant.empresa.avisosEmail,
       configuracoes: {
         logoDaLojaUrl: tenant.logoDaLojaUrl,
         corPrincipalDoTema: tenant.corPrincipalDoTema,

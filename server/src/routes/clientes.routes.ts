@@ -74,6 +74,49 @@ clientesRouter.post('/', async (req, res) => {
   res.status(201).json(serializarCliente(cliente));
 });
 
+const importarClientesSchema = z.object({
+  clientes: z
+    .array(
+      z.object({
+        nome: z.string().trim().min(1).max(191),
+        telefone: z.string().trim().max(30).optional(),
+        email: z.string().trim().email().optional().or(z.literal('')),
+        cpfCnpj: z.string().trim().max(30).optional(),
+      }),
+    )
+    .min(1)
+    .max(2000),
+});
+
+/** Importação em massa por planilha. Quem já existe (mesmo CPF/CNPJ na loja, ou
+ * repetido no próprio arquivo) é ignorado, pra importar duas vezes não duplicar. */
+clientesRouter.post('/importar', requerirTela(['clientes']), async (req, res) => {
+  const { tenantId, id: usuarioId } = req.usuario!;
+  const parse = importarClientesSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: 'Arquivo inválido: confira os dados (nome é obrigatório e e-mail precisa ser válido).' });
+
+  const existentes = await prisma.cliente.findMany({ where: { tenantId, cpfCnpj: { not: null } }, select: { cpfCnpj: true } });
+  const jaTem = new Set(existentes.map((c) => c.cpfCnpj!.replace(/\D/g, '')));
+
+  const novos: Array<{ tenantId: string; nome: string; telefone?: string; email?: string; cpfCnpj?: string }> = [];
+  let ignorados = 0;
+  for (const c of parse.data.clientes) {
+    const doc = c.cpfCnpj?.replace(/\D/g, '');
+    if (doc) {
+      if (jaTem.has(doc)) {
+        ignorados += 1;
+        continue;
+      }
+      jaTem.add(doc);
+    }
+    novos.push({ tenantId, nome: c.nome, telefone: c.telefone || undefined, email: c.email || undefined, cpfCnpj: c.cpfCnpj || undefined });
+  }
+
+  if (novos.length > 0) await prisma.cliente.createMany({ data: novos });
+  await registrarAuditoria(tenantId, usuarioId, 'cliente.importarCsv', `${novos.length} cliente(s), ${ignorados} ignorado(s)`);
+  res.status(201).json({ criados: novos.length, ignorados });
+});
+
 clientesRouter.put('/:id', async (req, res) => {
   const { tenantId } = req.usuario!;
   const parse = clienteSchema.partial().safeParse(req.body);

@@ -1,6 +1,7 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { AvisoAssinatura } from './AvisoAssinatura';
 import { useTenant } from '@/contexts/TenantContext';
 import { hexParaRgb, clarearHex } from '@/utils/cores';
 
@@ -35,7 +36,10 @@ export function AppLayout({ titulo, subtitulo, children }: AppLayoutProps) {
       <Sidebar aberta={menuAberto} aoFechar={() => setMenuAberto(false)} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header titulo={titulo} subtitulo={subtitulo} aoAbrirMenu={() => setMenuAberto(true)} />
-        <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8">{children}</main>
+        <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
+          <AvisoAssinatura />
+          {children}
+        </main>
       </div>
     </div>
   );

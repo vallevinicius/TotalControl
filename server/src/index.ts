@@ -1,6 +1,7 @@
 import { app } from './app.js';
 import { garantirAdminPlataforma } from './lib/adminBootstrap.js';
 import { limparSessoesAntigas } from './lib/sessao.js';
+import { executarAvisos } from './lib/avisos.js';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 
@@ -23,4 +24,10 @@ garantirAdminPlataforma()
     const faxina = () => limparSessoesAntigas().catch((e) => console.error('Falha na limpeza de sessões:', e));
     faxina();
     setInterval(faxina, 6 * 3_600_000).unref();
+    // Avisos por e-mail: de hora em hora, entre 8h e 20h (horário do servidor). Cada aviso
+    // sai uma vez só (tabela AvisoEnviado), então repetir a verificação é inofensivo.
+    setInterval(() => {
+      const hora = new Date().getHours();
+      if (hora >= 8 && hora <= 20) executarAvisos().catch((e) => console.error('Falha nos avisos por e-mail:', e));
+    }, 3_600_000).unref();
   });

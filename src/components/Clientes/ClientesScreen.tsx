@@ -5,7 +5,8 @@ import { Paginacao } from '@/components/Common/Paginacao';
 import { useTenant } from '@/contexts/TenantContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useConfirm } from '@/contexts/ConfirmContext';
-import { getClientes, createCliente, updateCliente, deleteCliente, getHistoricoCliente } from '@/services/apiService';
+import { getClientes, createCliente, updateCliente, deleteCliente, getHistoricoCliente, importarClientes } from '@/services/apiService';
+import { ImportarClientesModal } from './ImportarClientesModal';
 import { formatarMoeda } from '@/utils/formatters';
 import type { Cliente, HistoricoCliente } from '@/types';
 
@@ -24,6 +25,7 @@ export function ClientesScreen() {
   const [historico, setHistorico] = useState<HistoricoCliente | null>(null);
   const [carregandoHistorico, setCarregandoHistorico] = useState(false);
 
+  const [mostrarImportar, setMostrarImportar] = useState(false);
   const [clienteEditando, setClienteEditando] = useState<Cliente | null>(null);
   const [nome, setNome] = useState('');
   const [telefone, setTelefone] = useState('');
@@ -130,12 +132,20 @@ export function ClientesScreen() {
           placeholder="Buscar por nome, telefone ou CPF/CNPJ…"
           className="w-full max-w-xs rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none"
         />
+        <div className="flex items-center gap-3">
+        <button
+          onClick={() => setMostrarImportar(true)}
+          className="rounded-lg border border-ink-600 px-3 py-2 text-sm font-medium text-ink-200 hover:border-tenant hover:text-tenant"
+        >
+          Importar CSV
+        </button>
         <button
           onClick={() => (mostrarFormulario ? limparFormulario() : setMostrarFormulario(true))}
           className="rounded-lg bg-tenant px-4 py-2 text-sm font-semibold text-tenant-foreground hover:opacity-90"
         >
           {mostrarFormulario ? 'Cancelar' : '+ Novo cliente'}
         </button>
+        </div>
       </div>
 
       {mostrarFormulario && (
@@ -248,6 +258,22 @@ export function ClientesScreen() {
       )}
 
       <Paginacao pagina={pagina} totalPaginas={totalPaginas} total={totalClientes} aoMudarPagina={setPagina} />
+
+      {mostrarImportar && (
+        <ImportarClientesModal
+          aoFechar={() => setMostrarImportar(false)}
+          aoImportar={async (lista) => {
+            try {
+              const r = await importarClientes(lista);
+              toast.sucesso(`${r.criados} cliente(s) importado(s)${r.ignorados > 0 ? `, ${r.ignorados} já existiam` : ''}.`);
+              setMostrarImportar(false);
+              await carregarClientes();
+            } catch (err) {
+              toast.erro(err instanceof Error ? err.message : 'Erro ao importar clientes.');
+            }
+          }}
+        />
+      )}
 
       {clienteHistorico && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true">

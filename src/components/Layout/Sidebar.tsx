@@ -89,6 +89,7 @@ export function Sidebar({ aberta, aoFechar }: SidebarProps) {
           tela: 'financeiro',
           filhos: [
             { rota: '/financeiro', rotulo: 'Visão geral', exato: true },
+            { rota: '/financeiro/contas', rotulo: 'Contas a pagar e receber' },
             { rota: '/financeiro/lancamentos', rotulo: 'Lançamentos' },
           ],
         },
@@ -100,6 +101,7 @@ export function Sidebar({ aberta, aoFechar }: SidebarProps) {
       rotulo: 'Conta',
       itens: [
         { rota: '/conta', rotulo: 'Minha conta', icone: IconeConta },
+        ...(usuarioAtual?.raiz ? [{ rota: '/empresa', rotulo: 'Empresa', icone: IconeLojas }] : []),
         ...(contaAdmin
           ? [
               { rota: '/usuarios', rotulo: 'Usuários', icone: IconeUsuarios },

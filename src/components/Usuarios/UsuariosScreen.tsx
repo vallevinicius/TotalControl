@@ -3,8 +3,9 @@ import { AppLayout } from '@/components/Layout/AppLayout';
 import { LoadingState } from '@/components/Common/LoadingState';
 import { useTenant } from '@/contexts/TenantContext';
 import { useToast } from '@/contexts/ToastContext';
+import { ModalSenhaGerada } from '@/components/Admin/AdminModais';
 import { useConfirm } from '@/contexts/ConfirmContext';
-import { getUsuarios, createUsuario, setUsuarioAtivo, atualizarAcessoUsuario, concederAcessoLoja } from '@/services/apiService';
+import { getUsuarios, createUsuario, resetarSenhaDeUsuario, setUsuarioAtivo, atualizarAcessoUsuario, concederAcessoLoja } from '@/services/apiService';
 import { slugificarNomeLoja } from '@/utils/slug';
 import { TELAS_COM_PERMISSAO, PERMISSOES_PADRAO_POR_PAPEL } from '@/utils/permissoes';
 import { LIMITES_POR_PLANO } from '@/utils/planos';
@@ -86,6 +87,10 @@ export function UsuariosScreen() {
   const [papel, setPapel] = useState<PapelUsuario>('OPERADOR_CAIXA');
   const [permissoes, setPermissoes] = useState<TelaComPermissao[]>(PERMISSOES_PADRAO_POR_PAPEL.OPERADOR_CAIXA);
   const [enviando, setEnviando] = useState(false);
+  // Convite por e-mail (e-mail real, a pessoa cria a própria senha) x login da loja (você define a senha).
+  const [modoConvite, setModoConvite] = useState(false);
+  const [emailConvite, setEmailConvite] = useState('');
+  const [senhaGerada, setSenhaGerada] = useState<{ nome: string; senha: string } | null>(null);
 
   async function carregarUsuarios() {
     setCarregando(true);
@@ -104,14 +109,22 @@ export function UsuariosScreen() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!nome.trim() || !emailLocal.trim() || !senha) return;
+    if (!nome.trim()) return;
+    if (modoConvite ? !emailConvite.trim() : !emailLocal.trim() || !senha) return;
     setEnviando(true);
     try {
-      const email = `${emailLocal.trim()}@${dominio}.com`;
-      await createUsuario({ nome: nome.trim(), email, senha, papel, permissoes });
-      toast.sucesso(`Login "${email}" criado.`);
+      if (modoConvite) {
+        const email = emailConvite.trim().toLowerCase();
+        await createUsuario({ nome: nome.trim(), email, convidarPorEmail: true, papel, permissoes });
+        toast.sucesso(`Convite enviado para ${email}.`);
+      } else {
+        const email = `${emailLocal.trim()}@${dominio}.com`;
+        await createUsuario({ nome: nome.trim(), email, senha, papel, permissoes });
+        toast.sucesso(`Login "${email}" criado.`);
+      }
       setNome('');
       setEmailLocal('');
+      setEmailConvite('');
       setSenha('');
       handleMudarPapel('OPERADOR_CAIXA');
       setMostrarFormulario(false);
@@ -120,6 +133,20 @@ export function UsuariosScreen() {
       toast.erro(err instanceof Error ? err.message : 'Erro ao criar login.');
     } finally {
       setEnviando(false);
+    }
+  }
+
+  async function handleResetarSenha(usuario: Usuario) {
+    const ok = await confirmar({
+      titulo: `Redefinir a senha de ${usuario.nome}?`,
+      descricao: 'Uma senha temporária é gerada e a senha atual deixa de funcionar. Repasse a nova senha com segurança: ela aparece uma única vez.',
+      textoConfirmar: 'Redefinir',
+    });
+    if (!ok) return;
+    try {
+      setSenhaGerada({ nome: usuario.nome, senha: await resetarSenhaDeUsuario(usuario.id) });
+    } catch (err) {
+      toast.erro(err instanceof Error ? err.message : 'Erro ao redefinir a senha.');
     }
   }
 
@@ -249,38 +276,76 @@ export function UsuariosScreen() {
             </select>
           </label>
 
-          <div className="col-span-2 text-sm text-ink-300">
-            <label className="mb-1 block">E-mail de login</label>
-            <div className="flex items-center gap-1.5">
-              <input
-                required
-                value={emailLocal}
-                onChange={(e) => setEmailLocal(e.target.value)}
-                placeholder="ex: caixa1"
-                className="w-40 rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none"
-              />
-              <span className="text-ink-400">@</span>
-              <span className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-ink-400">
-                {dominio}
-                <span className="text-ink-600">.com</span>
-              </span>
+          <div className="col-span-2">
+            <p className="mb-1.5 text-sm text-ink-300">Como a pessoa vai entrar</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { valor: false, titulo: 'Login da loja', texto: 'Você define o login e a senha.' },
+                { valor: true, titulo: 'Convite por e-mail', texto: 'A pessoa cria a própria senha.' },
+              ].map((o) => (
+                <button
+                  key={String(o.valor)}
+                  type="button"
+                  onClick={() => setModoConvite(o.valor)}
+                  className={['rounded-lg border px-3 py-2.5 text-left transition-colors', modoConvite === o.valor ? 'border-tenant bg-tenant-soft' : 'border-ink-600 hover:border-ink-500'].join(' ')}
+                >
+                  <p className={['text-sm font-medium', modoConvite === o.valor ? 'text-tenant' : 'text-ink-100'].join(' ')}>{o.titulo}</p>
+                  <p className="text-xs text-ink-400">{o.texto}</p>
+                </button>
+              ))}
             </div>
-            <p className="mt-1 text-xs text-ink-500">
-              O domínio é fixo, sempre o nome da sua loja | só um identificador de login, não é um e-mail real.
-            </p>
           </div>
 
-          <label className="block text-sm text-ink-300">
-            Senha
-            <input
-              type="password"
-              required
-              minLength={8} placeholder="8+ caracteres, com letras e números"
-              value={senha}
-              onChange={(e) => setSenha(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 focus:border-tenant focus:outline-none"
-            />
-          </label>
+          {modoConvite ? (
+            <label className="col-span-2 block text-sm text-ink-300">
+              E-mail da pessoa
+              <input
+                type="email"
+                required
+                value={emailConvite}
+                onChange={(e) => setEmailConvite(e.target.value)}
+                placeholder="nome@exemplo.com"
+                className="mt-1 w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 focus:border-tenant focus:outline-none"
+              />
+              <span className="mt-1 block text-xs text-ink-500">Precisa ser um e-mail real: ela recebe um link para criar a senha (vale por 3 dias).</span>
+            </label>
+          ) : (
+            <>
+          <div className="col-span-2 text-sm text-ink-300">
+                <label className="mb-1 block">E-mail de login</label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    required
+                    value={emailLocal}
+                    onChange={(e) => setEmailLocal(e.target.value)}
+                    placeholder="ex: caixa1"
+                    className="w-40 rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 placeholder:text-ink-400 focus:border-tenant focus:outline-none"
+                  />
+                  <span className="text-ink-400">@</span>
+                  <span className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-ink-400">
+                    {dominio}
+                    <span className="text-ink-600">.com</span>
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-ink-500">
+                  O domínio é fixo, sempre o nome da sua loja: é só um identificador de login, não é um e-mail real.
+                </p>
+              </div>
+
+              <label className="block text-sm text-ink-300">
+                Senha
+                <input
+                  type="password"
+                  required
+                  minLength={8} placeholder="8+ caracteres, com letras e números"
+                  value={senha}
+                  onChange={(e) => setSenha(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-ink-600 bg-ink-700 px-3 py-2 text-ink-100 focus:border-tenant focus:outline-none"
+                />
+              </label>
+
+            </>
+          )}
 
           <div className="col-span-2">
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">O que essa pessoa vai ver</p>
@@ -353,6 +418,14 @@ export function UsuariosScreen() {
                           Lojas
                         </button>
                       )}
+                      {usuario.id !== usuarioAtual?.id && !usuario.raiz && (usuario.papel !== 'ADMIN' || usuarioAtual?.raiz) && (
+                        <button
+                          onClick={() => handleResetarSenha(usuario)}
+                          className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant"
+                        >
+                          Redefinir senha
+                        </button>
+                      )}
                       <button
                         onClick={() => handleToggleAtivo(usuario)}
                         disabled={usuario.id === usuarioAtual?.id || (usuario.raiz && usuario.ativo)}
@@ -369,6 +442,8 @@ export function UsuariosScreen() {
           </table>
         </div>
       )}
+
+      {senhaGerada && <ModalSenhaGerada usuarioNome={senhaGerada.nome} senha={senhaGerada.senha} onFechar={() => setSenhaGerada(null)} />}
 
       {usuarioEditando && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true">

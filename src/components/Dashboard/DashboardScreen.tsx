@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { AppLayout } from '@/components/Layout/AppLayout';
 import { LoadingState } from '@/components/Common/LoadingState';
 import { useTenant } from '@/contexts/TenantContext';
-import { getDashboardResumo } from '@/services/apiService';
+import { getDashboardResumo, getSerieDoDashboard } from '@/services/apiService';
+import { GraficoBarras } from '@/components/Common/GraficoBarras';
 import { formatarMoeda } from '@/utils/formatters';
 import { OnboardingChecklist } from './OnboardingChecklist';
-import type { ResumoDashboard } from '@/types';
+import type { PontoDeVendas, ResumoDashboard } from '@/types';
 
 interface CartaoMetricaProps {
   rotulo: string;
@@ -27,6 +28,7 @@ function CartaoMetrica({ rotulo, valor, destaque }: CartaoMetricaProps) {
 export function DashboardScreen() {
   const { tenant } = useTenant();
   const [resumo, setResumo] = useState<ResumoDashboard | null>(null);
+  const [serie, setSerie] = useState<PontoDeVendas[]>([]);
   const [carregando, setCarregando] = useState(true);
 
   useEffect(() => {
@@ -36,6 +38,8 @@ export function DashboardScreen() {
       setResumo(dados);
       setCarregando(false);
     });
+    // O gráfico é um complemento: se falhar, o painel continua inteiro.
+    getSerieDoDashboard(14).then(setSerie).catch(() => setSerie([]));
   }, [tenant]);
 
   return (
@@ -46,12 +50,30 @@ export function DashboardScreen() {
         <div className="space-y-6">
           <OnboardingChecklist />
 
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <CartaoMetrica rotulo="Faturamento do dia" valor={formatarMoeda(resumo.faturamentoDoDia, tenant)} destaque />
             <CartaoMetrica rotulo="Vendas do dia" valor={String(resumo.quantidadeVendasDoDia)} />
             <CartaoMetrica rotulo="Ticket médio" valor={formatarMoeda(resumo.ticketMedio, tenant)} />
             <CartaoMetrica rotulo="Produtos com estoque baixo" valor={String(resumo.produtosComEstoqueBaixo)} />
           </div>
+
+          {serie.length > 0 && (
+            <div className="rounded-xl border border-ink-700 bg-ink-800 p-6">
+              <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+                <p className="font-display text-base font-semibold text-ink-100">Vendas dos últimos 14 dias</p>
+                <p className="text-xs text-ink-500">
+                  Total: <span className="font-mono text-ink-300">{formatarMoeda(serie.reduce((a, p) => a + p.faturamento, 0), tenant)}</span>
+                </p>
+              </div>
+              <GraficoBarras
+                pontos={serie.map((p) => ({
+                  rotulo: p.data.slice(8, 10) + '/' + p.data.slice(5, 7),
+                  valor: p.faturamento,
+                  descricao: `${p.data.slice(8, 10)}/${p.data.slice(5, 7)}: ${formatarMoeda(p.faturamento, tenant)} em ${p.vendas} venda(s)`,
+                }))}
+              />
+            </div>
+          )}
 
           <div className="rounded-xl border border-ink-700 bg-ink-800 p-6">
             <p className="mb-4 font-display text-base font-semibold text-ink-100">Produtos mais vendidos hoje</p>

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
+import { diaNoFuso, diasDoPeriodo } from '../lib/datas.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { requireFeaturePlano } from '../middleware/plano.js';
@@ -161,4 +162,105 @@ relatoriosRouter.get('/vendas', async (req, res) => {
       quantidadeItens: v.itens.reduce((acc, i) => acc + i.quantidade, 0),
     })),
   });
+});
+
+function periodo(req: import('express').Request): { inicio: string; fim: string } | null {
+  const ok = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  return ok(req.query.inicio) && ok(req.query.fim) ? { inicio: req.query.inicio, fim: req.query.fim } : null;
+}
+
+/** Faturamento e nº de vendas por dia do período (até 92 dias), no fuso da loja. Dias sem venda vêm zerados. */
+relatoriosRouter.get('/serie-diaria', async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const p = periodo(req);
+  if (!p) return res.status(400).json({ erro: 'Informe o período (inicio e fim, AAAA-MM-DD).' });
+
+  const loja = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { fusoHorario: true } });
+  const fuso = loja?.fusoHorario ?? 'America/Sao_Paulo';
+  const dias = diasDoPeriodo(p.inicio, p.fim);
+  if (dias.length === 0) return res.json([]);
+
+  const fim = new Date(`${p.fim}T23:59:59.999Z`);
+  fim.setUTCDate(fim.getUTCDate() + 1); // folga de fuso; o filtro final é por dia local
+  const inicio = new Date(`${p.inicio}T00:00:00Z`);
+  inicio.setUTCDate(inicio.getUTCDate() - 1);
+  const vendas = await prisma.transacao.findMany({ where: { tenantId, tipo: 'SAIDA', timestamp: { gte: inicio, lte: fim } }, select: { timestamp: true, valorTotal: true } });
+
+  const porDia = new Map(dias.map((d) => [d, { data: d, faturamento: 0, vendas: 0 }]));
+  for (const v of vendas) {
+    const ponto = porDia.get(diaNoFuso(v.timestamp, fuso));
+    if (ponto) {
+      ponto.faturamento += Number(v.valorTotal);
+      ponto.vendas += 1;
+    }
+  }
+  res.json([...porDia.values()].map((x) => ({ ...x, faturamento: Number(x.faturamento.toFixed(2)) })));
+});
+
+/** Curva ABC: classifica os produtos pela fatia do faturamento do período. A (até 80% da receita
+ * acumulada) são os que sustentam a loja; B (até 95%) os intermediários; C o resto. */
+relatoriosRouter.get('/curva-abc', async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const p = periodo(req);
+  if (!p) return res.status(400).json({ erro: 'Informe o período (inicio e fim, AAAA-MM-DD).' });
+
+  const fim = new Date(p.fim);
+  fim.setUTCHours(23, 59, 59, 999);
+  const itens = await prisma.itemTransacao.findMany({
+    where: { transacao: { tenantId, tipo: 'SAIDA', timestamp: { gte: new Date(p.inicio), lte: fim } } },
+    select: { productId: true, nomeProdutoSnapshot: true, quantidade: true, subtotal: true },
+  });
+
+  const porProduto = new Map<string, { nome: string; quantidade: number; receita: number }>();
+  for (const i of itens) {
+    const a = porProduto.get(i.productId) ?? { nome: i.nomeProdutoSnapshot, quantidade: 0, receita: 0 };
+    a.quantidade += i.quantidade;
+    a.receita += Number(i.subtotal);
+    porProduto.set(i.productId, a);
+  }
+
+  const ordenados = [...porProduto.entries()].map(([productId, a]) => ({ productId, ...a })).sort((a, b) => b.receita - a.receita);
+  const total = ordenados.reduce((acc, x) => acc + x.receita, 0);
+  let acumulado = 0;
+  const lista = ordenados.map((x, posicao) => {
+    acumulado += x.receita;
+    // Convenção usual: a classe sai do acumulado já com o próprio produto (até 80% = A,
+    // até 95% = B, o resto = C). O campeão de vendas é sempre A, mesmo que sozinho passe de 80%.
+    const pct = total === 0 ? 100 : (acumulado / total) * 100;
+    const classe = posicao === 0 ? 'A' : pct <= 80.0001 ? 'A' : pct <= 95.0001 ? 'B' : 'C';
+    return {
+      productId: x.productId,
+      nome: x.nome,
+      quantidade: x.quantidade,
+      receita: Number(x.receita.toFixed(2)),
+      participacao: total > 0 ? Number(((x.receita / total) * 100).toFixed(1)) : 0,
+      acumulado: total > 0 ? Number(((acumulado / total) * 100).toFixed(1)) : 0,
+      classe,
+    };
+  });
+  res.json({ total: Number(total.toFixed(2)), itens: lista });
+});
+
+/** Estoque parado: produtos ativos com saldo e SEM venda nos últimos N dias (padrão 30).
+ * `valorParado` é o dinheiro preso (saldo x preço de custo). */
+relatoriosRouter.get('/estoque-parado', async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const dias = Math.min(365, Math.max(7, Math.trunc(Number(req.query.dias)) || 30));
+  const desde = new Date(Date.now() - dias * 86_400_000);
+
+  const [produtos, vendidos] = await Promise.all([
+    prisma.produto.findMany({ where: { tenantId, ativo: true, quantidadeEmEstoque: { gt: 0 } }, select: { id: true, nome: true, sku: true, quantidadeEmEstoque: true, precoCusto: true } }),
+    prisma.itemTransacao.groupBy({
+      by: ['productId'],
+      where: { transacao: { tenantId, tipo: 'SAIDA', timestamp: { gte: desde } } },
+    }),
+  ]);
+  const comVenda = new Set(vendidos.map((v) => v.productId));
+
+  const parados = produtos
+    .filter((p) => !comVenda.has(p.id))
+    .map((p) => ({ productId: p.id, nome: p.nome, sku: p.sku, quantidade: p.quantidadeEmEstoque, valorParado: Number((p.quantidadeEmEstoque * Number(p.precoCusto)).toFixed(2)) }))
+    .sort((a, b) => b.valorParado - a.valorParado);
+
+  res.json({ dias, valorTotal: Number(parados.reduce((a, p) => a + p.valorParado, 0).toFixed(2)), itens: parados });
 });

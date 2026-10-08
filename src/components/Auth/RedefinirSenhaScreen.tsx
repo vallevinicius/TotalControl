@@ -11,6 +11,7 @@ export function RedefinirSenhaScreen() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
+  const convite = params.get('convite') === '1';
   const [senha, setSenha] = useState('');
   const [confirmar, setConfirmar] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -24,7 +25,7 @@ export function RedefinirSenhaScreen() {
     setEnviando(true);
     try {
       await redefinirSenha(token, senha);
-      toast.sucesso('Senha alterada. Entre com a nova senha.');
+      toast.sucesso(convite ? 'Senha criada. Agora é só entrar.' : 'Senha alterada. Entre com a nova senha.');
       navigate('/login', { replace: true });
     } catch (erro) {
       toast.erro(erro instanceof Error ? erro.message : 'Não foi possível alterar a senha.');
@@ -35,8 +36,8 @@ export function RedefinirSenhaScreen() {
 
   return (
     <AuthLayout
-      titulo="Criar nova senha"
-      subtitulo="Escolha uma senha que você não use em outros lugares"
+      titulo={convite ? 'Crie a sua senha' : 'Criar nova senha'}
+      subtitulo={convite ? 'Você foi convidado para o Total Control. Escolha a senha de acesso' : 'Escolha uma senha que você não use em outros lugares'}
       rodape={
         <Link to="/login" className="font-medium text-tenant hover:underline">
           Voltar para o login

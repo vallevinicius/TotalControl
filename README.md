@@ -108,6 +108,16 @@ vencidos, o login funciona mas só a tela do plano abre (a API responde 402
 gunzip -c totalcontrol_db_AAAAMMDD_HHMMSS.sql.gz | mysql -u USUARIO -p NOME_DO_BANCO
 ```
 
+### 1.4. O que o dono da loja encontra no sistema
+
+- **Empresa**: editar os dados cadastrais (qualquer plano), exportar tudo em JSON e excluir a conta (LGPD), e ligar ou desligar os avisos por e-mail.
+- **Estoque**: editar produto, ajuste de inventário com motivo, histórico de movimentações por produto, categorias (criar, renomear, excluir), produtos excluídos (reativar), exportar produtos e importar clientes em CSV.
+- **Financeiro**: contas a pagar e a receber (com parcelas mensais e baixa) e o resultado do período (DRE simplificada, com custo estimado pelo preço de custo atual).
+- **Relatórios e dashboard**: gráfico de vendas por dia, curva ABC, estoque parado e impressão em PDF.
+- **Equipe**: convite por e-mail (a pessoa cria a própria senha) e redefinição de senha pelo administrador.
+- **Plano**: histórico de cobranças do Mercado Pago e aviso na tela quando o pagamento falha ou o teste acaba.
+- **Avisos por e-mail** (precisam do SMTP configurado): teste grátis acabando ou acabado, assinatura cancelada chegando ao fim, pagamento recusado, resumo semanal de estoque baixo e contas atrasadas ou vencendo. O servidor verifica de hora em hora entre 8h e 20h, e cada aviso sai uma vez só.
+
 ### 2. Rodar o frontend + backend juntos
 
 Na raiz do projeto:
