@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `MovimentacaoEstoque` MODIFY `tipo` ENUM('INICIAL', 'ENTRADA', 'VENDA', 'ESTORNO', 'AJUSTE', 'TRANSFERENCIA') NOT NULL;

@@ -30,9 +30,12 @@ import { ImportarProdutosModal } from './ImportarProdutosModal';
 import { AjusteEstoqueModal } from './AjusteEstoqueModal';
 import { HistoricoProdutoModal } from './HistoricoProdutoModal';
 import { CategoriasModal } from './CategoriasModal';
+import { TransferirEstoqueModal } from './TransferirEstoqueModal';
+import { planoPermiteMultiLoja } from '@/utils/planos';
+import { podeFazer } from '@/utils/acoes';
 
 export function EstoqueScreen() {
-  const { tenant } = useTenant();
+  const { tenant, usuarioAtual } = useTenant();
   const toast = useToast();
   const confirmar = useConfirm();
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -43,6 +46,7 @@ export function EstoqueScreen() {
   const [produtoParaEditar, setProdutoParaEditar] = useState<Produto | null>(null);
   const [produtoParaAjuste, setProdutoParaAjuste] = useState<Produto | null>(null);
   const [produtoHistorico, setProdutoHistorico] = useState<Produto | null>(null);
+  const [produtoParaTransferir, setProdutoParaTransferir] = useState<Produto | null>(null);
   const [mostrarCategorias, setMostrarCategorias] = useState(false);
   const [mostrarInativos, setMostrarInativos] = useState(false);
   const [exportando, setExportando] = useState(false);
@@ -284,6 +288,11 @@ export function EstoqueScreen() {
                           <button onClick={() => setProdutoParaEntrada(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
                             + Entrada
                           </button>
+                          {tenant && planoPermiteMultiLoja(tenant.planoAtual) && podeFazer(usuarioAtual, 'estoque.ajustar') && produto.quantidadeEmEstoque > 0 && (
+                            <button onClick={() => setProdutoParaTransferir(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+                              Transferir
+                            </button>
+                          )}
                           <button onClick={() => setProdutoParaAjuste(produto)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
                             Ajustar
                           </button>
@@ -379,6 +388,10 @@ export function EstoqueScreen() {
           aoFechar={() => setMostrarSugestao(false)}
           aoRegistrarEntrada={handleRegistrarEntradaSugestao}
         />
+      )}
+
+      {produtoParaTransferir && (
+        <TransferirEstoqueModal produto={produtoParaTransferir} aoFechar={() => setProdutoParaTransferir(null)} aoConcluir={carregarDados} />
       )}
 
       {mostrarImportar && (

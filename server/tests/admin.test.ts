@@ -103,4 +103,19 @@ describe('verificação em duas etapas do admin', () => {
     await prisma.adminPlataforma.updateMany({ data: { totpAtivo: false, totpSegredo: null } });
     expect((await request(app).post('/api/admin/login').send({ email: EMAIL, senha: SENHA_ADMIN })).body.token).toBeTruthy();
   });
+
+  it('receita: MRR soma só assinaturas ativas Starter e Pro; Enterprise fica como contagem', async () => {
+    const { auth } = await loginAdmin();
+    const antes = (await request(app).get('/api/admin/receita').set(auth)).body;
+    const a = await criarEmpresa({ plano: 'STARTER' });
+    const b = await criarEmpresa({ plano: 'PRO' });
+    const c = await criarEmpresa({ plano: 'ENTERPRISE' });
+    for (const x of [a, b, c]) await prisma.empresa.update({ where: { id: x.empresa.id }, data: { assinaturaStatus: 'ATIVA' } });
+    const depois = (await request(app).get('/api/admin/receita').set(auth)).body;
+    expect(depois.mrr - antes.mrr).toBeCloseTo(59.9 + 129.9, 2);
+    expect(depois.assinantesAtivos - antes.assinantesAtivos).toBe(3);
+    expect(depois.assinantesPorPlano.ENTERPRISE - antes.assinantesPorPlano.ENTERPRISE).toBe(1);
+    const loja = await entrar(a.dono.email);
+    expect((await request(app).get('/api/admin/receita').set(loja.auth)).status).toBe(403);
+  });
 });

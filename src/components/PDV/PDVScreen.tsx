@@ -17,7 +17,24 @@ import {
   cancelarVenda,
   movimentarCaixa,
   getProdutoPorCodigo,
+  getTodosOsProdutos,
 } from '@/services/apiService';
+import {
+  buscarNoCatalogo,
+  chaveCache,
+  ehFalhaDeConexao,
+  enfileirarVenda,
+  guardarCache,
+  lerCache,
+  novoIdLocal,
+  reativarNaFila,
+  removerDaFila,
+  sincronizarFila,
+  useFila,
+  useOnline,
+} from '@/lib/offline';
+import { useConfirm } from '@/contexts/ConfirmContext';
+import { OfflineBanner } from './OfflineBanner';
 import { formatarMoeda, formatarHora, formatarFormaPagamento } from '@/utils/formatters';
 import { AbrirCaixaCard } from './AbrirCaixaCard';
 import { FecharCaixaModal } from './FecharCaixaModal';
@@ -65,6 +82,14 @@ export function PDVScreen() {
   const podeCancelar = podeFazer(usuarioAtual, 'vendas.cancelar');
   const podeSangria = podeFazer(usuarioAtual, 'caixa.sangria');
   const toast = useToast();
+  const confirmar = useConfirm();
+  const online = useOnline();
+  const fila = useFila(tenant?.id);
+  const [sincronizandoFila, setSincronizandoFila] = useState(false);
+  // Catálogo e clientes guardados no aparelho: é com eles que a busca funciona sem internet.
+  const catalogoRef = useRef<Produto[]>([]);
+  const clientesRef = useRef<Cliente[]>([]);
+  const filaPendente = fila.length > 0;
 
   const [caixa, setCaixa] = useState<Caixa | null>(null);
   const [carregandoCaixa, setCarregandoCaixa] = useState(true);
@@ -104,6 +129,8 @@ export function PDVScreen() {
     setCarregandoVendas(true);
     try {
       setVendasDoCaixa(await getVendasDoCaixa(caixaId));
+    } catch (e) {
+      if (!ehFalhaDeConexao(e)) throw e; // sem internet: mantém a lista que já estava na tela
     } finally {
       setCarregandoVendas(false);
     }
@@ -114,7 +141,13 @@ export function PDVScreen() {
     try {
       const atual = await getCaixaAtual();
       setCaixa(atual);
+      if (tenant) guardarCache(chaveCache(tenant.id, 'caixa'), atual);
       if (atual) await carregarVendasDoCaixa(atual.id);
+    } catch (e) {
+      if (!ehFalhaDeConexao(e) || !tenant) throw e;
+      // Sem internet: usa o caixa da última vez que o servidor respondeu.
+      const guardado = await lerCache<Caixa | null>(chaveCache(tenant.id, 'caixa'));
+      setCaixa(guardado?.valor ?? null);
     } finally {
       setCarregandoCaixa(false);
     }
@@ -130,12 +163,83 @@ export function PDVScreen() {
   }
 
   useEffect(() => {
-    carregarCaixa();
-    carregarHistorico();
+    carregarCaixa().catch(() => undefined);
+    carregarHistorico().catch(() => undefined);
     getVendedores()
-      .then((lista) => setVendedores(lista.filter((v) => v.ativo)))
-      .catch(() => setVendedores([])); // módulo pode estar bloqueado pelo plano
+      .then((lista) => {
+        setVendedores(lista.filter((v) => v.ativo));
+        if (tenant) guardarCache(chaveCache(tenant.id, 'vendedores'), lista);
+      })
+      .catch(async (e) => {
+        // Sem internet usa os vendedores guardados; plano sem o módulo (erro de API): sem vendedores.
+        const guardado = ehFalhaDeConexao(e) && tenant ? await lerCache<Vendedor[]>(chaveCache(tenant.id, 'vendedores')) : null;
+        setVendedores((guardado?.valor ?? []).filter((v) => v.ativo));
+      });
   }, []);
+
+  // Catálogo e clientes no aparelho: primeiro o que já está guardado (abre rápido, funciona offline),
+  // depois, com internet, atualiza.
+  useEffect(() => {
+    if (!tenant) return;
+    let ativo = true;
+    (async () => {
+      const [prod, cli] = await Promise.all([lerCache<Produto[]>(chaveCache(tenant.id, 'catalogo')), lerCache<Cliente[]>(chaveCache(tenant.id, 'clientes'))]);
+      if (!ativo) return;
+      if (prod) catalogoRef.current = prod.valor;
+      if (cli) clientesRef.current = cli.valor;
+      if (!online) return;
+      try {
+        const [produtos, clientes] = await Promise.all([getTodosOsProdutos(), getClientes(undefined, 1, 100).then((r) => r.itens)]);
+        if (!ativo) return;
+        catalogoRef.current = produtos;
+        clientesRef.current = clientes;
+        guardarCache(chaveCache(tenant.id, 'catalogo'), produtos);
+        guardarCache(chaveCache(tenant.id, 'clientes'), clientes);
+      } catch {
+        // mantém o que estava guardado
+      }
+    })();
+    return () => {
+      ativo = false;
+    };
+  }, [tenant?.id, online]);
+
+  async function enviarFila() {
+    if (!tenant || sincronizandoFila) return;
+    setSincronizandoFila(true);
+    try {
+      const r = await sincronizarFila(tenant.id, registerSale);
+      if (r.enviadas > 0) {
+        toast.sucesso(`${r.enviadas} venda(s) enviada(s).`);
+        carregarCaixa().catch(() => undefined);
+      }
+      r.avisos.forEach((a) => toast.erro(a));
+      if (r.recusadas > 0) toast.erro(`${r.recusadas} venda(s) não foram aceitas. Veja o aviso no topo da tela.`);
+    } finally {
+      setSincronizandoFila(false);
+    }
+  }
+
+  // Volta a conexão (ou há venda esperando): envia sozinho, e tenta de novo a cada 30 s.
+  useEffect(() => {
+    if (!online || !tenant || !fila.some((v) => !v.erro)) return;
+    enviarFila();
+    const t = setInterval(enviarFila, 30_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, tenant?.id, fila.length]);
+
+  async function descartarDaFila(venda: { idLocal: string; total: number }) {
+    if (!tenant) return;
+    const ok = await confirmar({
+      titulo: 'Descartar esta venda?',
+      descricao: 'Ela será apagada deste aparelho e não entra no caixa nem no estoque. Só faça isso se já resolveu a situação de outro jeito.',
+      textoConfirmar: 'Descartar',
+      textoCancelar: 'Manter',
+      perigoso: true,
+    });
+    if (ok) removerDaFila(tenant.id, venda.idLocal);
+  }
 
   useEffect(() => {
     if (tenant && caixa) setEmEspera(listarEmEspera(tenant.id, caixa.id));
@@ -148,25 +252,46 @@ export function PDVScreen() {
       return;
     }
     let cancelado = false;
-    searchProducts(termo).then((resultado) => {
-      if (!cancelado) setResultados(resultado.itens);
-    });
+    const local = () => buscarNoCatalogo(catalogoRef.current, termo);
+    if (!online) {
+      setResultados(local());
+    } else {
+      searchProducts(termo)
+        .then((resultado) => {
+          if (!cancelado) setResultados(resultado.itens);
+        })
+        .catch((e) => {
+          if (!cancelado && ehFalhaDeConexao(e)) setResultados(local());
+        });
+    }
     return () => {
       cancelado = true;
     };
-  }, [termoBusca]);
+  }, [termoBusca, online]);
 
   useEffect(() => {
     if (!listaClientesAberta) return;
     const termo = termoCliente.trim();
     let cancelado = false;
-    getClientes(termo || undefined).then((resultado) => {
-      if (!cancelado) setResultadosClientes(resultado.itens);
-    });
+    const local = () => {
+      const t = termo.toLowerCase();
+      return clientesRef.current.filter((c) => !t || c.nome.toLowerCase().includes(t) || (c.telefone ?? '').includes(t) || (c.cpfCnpj ?? '').includes(t)).slice(0, 20);
+    };
+    if (!online) {
+      setResultadosClientes(local());
+    } else {
+      getClientes(termo || undefined)
+        .then((resultado) => {
+          if (!cancelado) setResultadosClientes(resultado.itens);
+        })
+        .catch((e) => {
+          if (!cancelado && ehFalhaDeConexao(e)) setResultadosClientes(local());
+        });
+    }
     return () => {
       cancelado = true;
     };
-  }, [termoCliente, listaClientesAberta]);
+  }, [termoCliente, listaClientesAberta, online]);
 
   async function handleAbrirCaixa(valorAbertura: number, senha?: string) {
     try {
@@ -257,39 +382,87 @@ export function PDVScreen() {
   async function finalizarVenda() {
     if (carrinho.length === 0 || vendedorObrigatorioFaltando || recebidoInsuficiente || pagamentoInvalido) return;
     setProcessando(true);
+    const idLocal = novoIdLocal();
+    const agora = new Date();
+    const payload = {
+      itens: carrinho.map((i) => ({
+        productId: i.produto.id,
+        quantidade: i.quantidade,
+        precoUnitario: i.precoUnitario,
+      })),
+      desconto: valorDesconto,
+      // A taxa do cartão não vai: o servidor calcula.
+      ...(pagamento.dividido
+        ? { pagamentos: resultadoPagamento.pagamentos }
+        : { formaPagamento: pagamento.forma, parcelas: pagamento.forma === 'CARTAO_CREDITO' ? pagamento.parcelas : 1 }),
+      clienteId: clienteSelecionado?.id,
+      vendedorId: vendedorId || undefined,
+      // O mesmo id vai em toda tentativa: se a resposta se perder, reenviar não duplica a venda.
+      idLocal,
+      vendidaEm: agora.toISOString(),
+    };
+    const dadosExtras = {
+      valorRecebido: recebidoInformado ? valorRecebido : undefined,
+      troco: recebidoInformado ? troco : undefined,
+      clienteNome: clienteSelecionado?.nome,
+      clienteTelefone: clienteSelecionado?.telefone,
+      vendedorNome: vendedores.find((v) => v.id === vendedorId)?.nome,
+    };
     try {
-      const venda = await registerSale({
-        itens: carrinho.map((i) => ({
-          productId: i.produto.id,
-          quantidade: i.quantidade,
-          precoUnitario: i.precoUnitario,
-        })),
-        desconto: valorDesconto,
-        // A taxa do cartão não vai: o servidor calcula.
-        ...(pagamento.dividido
-          ? { pagamentos: resultadoPagamento.pagamentos }
-          : { formaPagamento: pagamento.forma, parcelas: pagamento.forma === 'CARTAO_CREDITO' ? pagamento.parcelas : 1 }),
-        clienteId: clienteSelecionado?.id,
-        vendedorId: vendedorId || undefined,
-      });
-      toast.sucesso(`Venda finalizada às ${new Date().toLocaleTimeString('pt-BR')}.`);
-      // Comprovante da venda que acabou de sair (com troco, se foi em dinheiro).
-      setComprovante({
-        id: venda.id,
-        timestamp: venda.timestamp,
-        itens: venda.itens.map((i) => ({ nome: i.nomeProdutoSnapshot, quantidade: i.quantidade, valorUnitario: i.valorUnitarioPraticado, subtotal: i.subtotal })),
-        desconto: venda.desconto,
-        taxas: venda.taxas,
-        total: venda.valorTotal,
-        formaPagamento: venda.formaPagamento,
-        parcelas: venda.parcelas,
-        pagamentos: venda.pagamentos,
-        valorRecebido: recebidoInformado ? valorRecebido : undefined,
-        troco: recebidoInformado ? troco : undefined,
-        clienteNome: clienteSelecionado?.nome,
-        clienteTelefone: clienteSelecionado?.telefone,
-        vendedorNome: vendedores.find((v) => v.id === vendedorId)?.nome,
-      });
+      let venda;
+      try {
+        if (!online) throw new TypeError('sem conexão');
+        venda = await registerSale(payload);
+      } catch (e) {
+        if (!ehFalhaDeConexao(e) || !tenant) throw e;
+        // Sem internet (ou a API não respondeu): guarda a venda no aparelho e segue. O envio é automático.
+        enfileirarVenda({
+          idLocal,
+          tenantId: tenant.id,
+          criadoEm: agora.toISOString(),
+          payload,
+          total: totalFinal,
+          resumo: carrinho.map((i) => `${i.quantidade}x ${i.produto.nome}`).join(', ').slice(0, 140),
+        });
+        // Abate o estoque do catálogo local, para a próxima venda offline enxergar o saldo certo.
+        for (const i of carrinho) {
+          const p = catalogoRef.current.find((x) => x.id === i.produto.id);
+          if (p) p.quantidadeEmEstoque = Math.max(0, p.quantidadeEmEstoque - i.quantidade);
+        }
+        guardarCache(chaveCache(tenant.id, 'catalogo'), catalogoRef.current);
+        toast.sucesso('Sem internet: venda guardada neste aparelho. Ela é enviada sozinha quando a conexão voltar.');
+        setComprovante({
+          id: idLocal,
+          timestamp: agora.toISOString(),
+          itens: carrinho.map((i) => ({ nome: i.produto.nome, quantidade: i.quantidade, valorUnitario: i.precoUnitario, subtotal: Number((i.precoUnitario * i.quantidade).toFixed(2)) })),
+          desconto: valorDesconto,
+          taxas: resultadoPagamento.taxa,
+          total: totalFinal,
+          formaPagamento: pagamento.dividido ? undefined : pagamento.forma,
+          parcelas: pagamento.dividido ? undefined : pagamento.parcelas,
+          pagamentos: pagamento.dividido ? resultadoPagamento.pagamentos : undefined,
+          pendenteDeEnvio: true,
+          ...dadosExtras,
+        });
+        venda = null;
+      }
+      if (venda) {
+        toast.sucesso(`Venda finalizada às ${new Date().toLocaleTimeString('pt-BR')}.`);
+        venda.avisos?.forEach((a) => toast.erro(a));
+        // Comprovante da venda que acabou de sair (com troco, se foi em dinheiro).
+        setComprovante({
+          id: venda.id,
+          timestamp: venda.timestamp,
+          itens: venda.itens.map((i) => ({ nome: i.nomeProdutoSnapshot, quantidade: i.quantidade, valorUnitario: i.valorUnitarioPraticado, subtotal: i.subtotal })),
+          desconto: venda.desconto,
+          taxas: venda.taxas,
+          total: venda.valorTotal,
+          formaPagamento: venda.formaPagamento,
+          parcelas: venda.parcelas,
+          pagamentos: venda.pagamentos,
+          ...dadosExtras,
+        });
+      }
       setCarrinho([]);
       setDescontoPercentual(0);
       setPagamento(PAGAMENTO_INICIAL);
@@ -297,7 +470,7 @@ export function PDVScreen() {
       setClienteSelecionado(null);
       setTermoCliente('');
       setMostrarNovaVenda(false);
-      carregarCaixa();
+      if (venda) carregarCaixa().catch(() => undefined);
     } catch (erro) {
       toast.erro(erro instanceof Error ? erro.message : 'Erro ao finalizar venda.');
     } finally {
@@ -375,12 +548,15 @@ export function PDVScreen() {
   async function aoDarEnterNaBusca() {
     const termo = termoBusca.trim();
     if (!termo) return;
+    const noCatalogo = () => catalogoRef.current.find((p) => p.codigoBarras === termo || p.sku === termo);
     try {
-      const produto = await getProdutoPorCodigo(termo);
+      const produto = online ? await getProdutoPorCodigo(termo) : (noCatalogo() ?? null);
       if (produto) return adicionarAoCarrinho(produto);
       if (resultados.length === 1) return adicionarAoCarrinho(resultados[0]);
       toast.erro(`Nenhum produto com o código "${termo}".`);
     } catch (erro) {
+      const local = ehFalhaDeConexao(erro) ? noCatalogo() : undefined;
+      if (local) return adicionarAoCarrinho(local);
       toast.erro(erro instanceof Error ? erro.message : 'Erro ao ler o código.');
     }
   }
@@ -437,6 +613,18 @@ export function PDVScreen() {
   if (!caixa) {
     return (
       <AppLayout titulo="Caixa" subtitulo="Abra o caixa para começar a vender">
+        <OfflineBanner
+          online={online}
+          fila={fila}
+          tenant={tenant}
+          sincronizando={sincronizandoFila}
+          aoEnviar={enviarFila}
+          aoTentarDeNovo={(id) => {
+            if (tenant) reativarNaFila(tenant.id, id);
+          }}
+          aoDescartar={descartarDaFila}
+        />
+        {!online && <p className="mb-4 text-sm text-ink-400">Abrir o caixa precisa de internet. Se ele já estava aberto neste aparelho, recarregue a página.</p>}
         <AbrirCaixaCard historico={historicoCaixas} carregandoHistorico={carregandoHistorico} aoAbrir={handleAbrirCaixa} />
       </AppLayout>
     );
@@ -449,6 +637,17 @@ export function PDVScreen() {
         mostrarNovaVenda ? 'Busque um produto, monte o carrinho e finalize a venda' : 'Vendas feitas neste turno de caixa'
       }
     >
+      <OfflineBanner
+        online={online}
+        fila={fila}
+        tenant={tenant}
+        sincronizando={sincronizandoFila}
+        aoEnviar={enviarFila}
+        aoTentarDeNovo={(id) => {
+          if (tenant) reativarNaFila(tenant.id, id);
+        }}
+        aoDescartar={descartarDaFila}
+      />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-700 bg-ink-800 px-5 py-3">
         <div className="text-sm">
           <span className="font-medium text-ink-100">Caixa aberto</span>
@@ -464,17 +663,19 @@ export function PDVScreen() {
           </span>
           {podeSangria && (
             <>
-              <button onClick={() => setMovimentoModal('SANGRIA')} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+              <button onClick={() => setMovimentoModal('SANGRIA')} disabled={!online} title={online ? undefined : 'Precisa de internet'} className="disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
                 Sangria
               </button>
-              <button onClick={() => setMovimentoModal('SUPRIMENTO')} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
+              <button onClick={() => setMovimentoModal('SUPRIMENTO')} disabled={!online} title={online ? undefined : 'Precisa de internet'} className="disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-tenant hover:text-tenant">
                 Suprimento
               </button>
             </>
           )}
           <button
             onClick={() => setMostrarFecharCaixa(true)}
-            className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400"
+            disabled={!online || filaPendente}
+            title={!online ? 'Precisa de internet' : filaPendente ? 'Envie as vendas guardadas antes de fechar o caixa' : undefined}
+            className="disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400"
           >
             Fechar caixa
           </button>
@@ -497,8 +698,8 @@ export function PDVScreen() {
               {vendasDoCaixa.some((v) => !v.cancelada) && (
                 <button
                   onClick={handleDesfazerUltimaVenda}
-                  disabled={desfazendo}
-                  title="Só funciona até 5 minutos depois da venda"
+                  disabled={desfazendo || !online}
+                  title={online ? 'Só funciona até 5 minutos depois da venda' : 'Precisa de internet'}
                   className="rounded-lg border border-ink-600 px-4 py-2 text-sm font-medium text-ink-200 hover:border-red-400 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {desfazendo ? 'Desfazendo…' : 'Desfazer última venda'}
@@ -556,7 +757,7 @@ export function PDVScreen() {
                       <td className="px-5 py-3.5 text-right">
                         <div className="flex justify-end gap-2">
                         {podeCancelar && !venda.cancelada && (
-                          <button onClick={() => setVendaParaCancelar(venda)} className="rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400">
+                          <button onClick={() => setVendaParaCancelar(venda)} disabled={!online} title={online ? undefined : 'Precisa de internet'} className="disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-ink-600 px-3 py-1.5 text-xs font-medium text-ink-200 hover:border-red-400 hover:text-red-400">
                             Cancelar
                           </button>
                         )}

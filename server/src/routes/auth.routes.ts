@@ -200,6 +200,43 @@ authRouter.post('/logout', async (req, res) => {
   res.status(204).end();
 });
 
+/** Aparelhos/navegadores com sessão aberta na conta. O app manda o próprio token de
+ * renovação no cabeçalho X-Refresh-Token só para a lista marcar qual é a sessão atual. */
+authRouter.get('/sessoes', requireAuth, async (req, res) => {
+  const atual = req.get('x-refresh-token');
+  const atualHash = atual ? crypto.createHash('sha256').update(atual).digest('hex') : null;
+  const sessoes = await prisma.sessaoRefresh.findMany({
+    where: { usuarioId: req.usuario!.id, revogadaEm: null, expiraEm: { gt: new Date() } },
+    orderBy: { criadoEm: 'desc' },
+  });
+  res.json(
+    sessoes.map((x) => ({
+      id: x.id,
+      criadaEm: x.criadoEm.toISOString(),
+      ip: x.ip ?? undefined,
+      dispositivo: x.userAgent ?? undefined,
+      atual: atualHash === x.tokenHash,
+    })),
+  );
+});
+
+/** Encerra uma sessão (ou todas as outras, com `outras`). Vale a partir da próxima
+ * renovação do app naquele aparelho (o token de acesso dura no máximo ACCESS_TOKEN_TTL). */
+authRouter.delete('/sessoes/:id', requireAuth, async (req, res) => {
+  const { id: usuarioId } = req.usuario!;
+  const atual = req.get('x-refresh-token');
+  if (req.params.id === 'outras') {
+    const atualHash = atual ? crypto.createHash('sha256').update(atual).digest('hex') : '';
+    // Apaga (não marca como revogada): token revogado reaparecendo é lido como roubo e derruba tudo.
+    const r = await prisma.sessaoRefresh.deleteMany({ where: { usuarioId, revogadaEm: null, tokenHash: { not: atualHash } } });
+    await registrarAuditoria(req.usuario!.tenantId, usuarioId, 'Encerrou as outras sessões', `${r.count} sessão(ões)`);
+    return res.json({ encerradas: r.count });
+  }
+  const r = await prisma.sessaoRefresh.deleteMany({ where: { id: req.params.id, usuarioId, revogadaEm: null } });
+  if (r.count === 0) return res.status(404).json({ erro: 'Sessão não encontrada.' });
+  res.status(204).end();
+});
+
 /** Confere se o usuário pode acessar a loja `tenantId`: é a loja de origem
  * dele (Usuario.tenantId, sempre permitida) ou ele tem um AcessoLoja
  * explícito pra ela E o plano atual da empresa ainda cobre múltiplas lojas.

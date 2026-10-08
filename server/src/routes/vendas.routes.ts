@@ -109,6 +109,10 @@ const novaVendaSchema = z
       .optional(),
     clienteId: z.string().optional(),
     vendedorId: z.string().optional(),
+    // Venda vinda do PDV (inclusive da fila offline): o id evita duplicar no reenvio...
+    idLocal: z.string().regex(/^[\w-]{8,64}$/).optional(),
+    // ...e o horário em que ela de fato aconteceu (só vale junto com idLocal).
+    vendidaEm: z.string().datetime().optional(),
   })
   .refine((d) => d.pagamentos || d.formaPagamento, { message: 'Informe a forma de pagamento.', path: ['formaPagamento'] });
 
@@ -120,7 +124,23 @@ vendasRouter.post('/', async (req, res) => {
   if (!parse.success) {
     return res.status(400).json({ erro: mensagemDeValidacao(parse.error), detalhes: parse.error.flatten() });
   }
-  const { itens, desconto = 0, clienteId, vendedorId } = parse.data;
+  const { itens, desconto = 0, clienteId, vendedorId, idLocal } = parse.data;
+
+  // Mesmo idLocal já registrado: devolve a venda existente (reenvio seguro, nada duplica).
+  if (idLocal) {
+    const existente = await prisma.transacao.findUnique({
+      where: { tenantId_idLocal: { tenantId, idLocal } },
+      include: { itens: true, pagamentos: true },
+    });
+    if (existente) return res.status(200).json(serializarTransacao(existente));
+  }
+  // Venda que ficou na fila do aparelho: o estoque pode ter mudado nesse meio-tempo, mas a mercadoria
+  // já saiu do balcão. Não recusa: registra, baixa o que houver e avisa a divergência.
+  const veioDaFila = Boolean(idLocal);
+  const agora = Date.now();
+  const horario = parse.data.vendidaEm && idLocal ? new Date(parse.data.vendidaEm).getTime() : agora;
+  const dataDaVenda = horario >= agora - 7 * 86_400_000 && horario <= agora + 5 * 60_000 ? new Date(horario) : new Date(agora);
+  const divergencias: string[] = [];
 
   const caixaAberto = await prisma.caixa.findFirst({ where: { tenantId, status: 'ABERTO' } });
   if (!caixaAberto) {
@@ -152,7 +172,7 @@ vendasRouter.post('/', async (req, res) => {
       for (const item of itens) {
         const produto = await tx.produto.findFirst({ where: { id: item.productId, tenantId } });
         if (!produto) throw new Error(`Produto ${item.productId} não encontrado.`);
-        if (produto.quantidadeEmEstoque < item.quantidade) {
+        if (!veioDaFila && produto.quantidadeEmEstoque < item.quantidade) {
           throw new Error(`Estoque insuficiente para "${produto.nome}". Disponível: ${produto.quantidadeEmEstoque}.`);
         }
         const valorUnitario = item.precoUnitario ?? Number(produto.precoVenda);
@@ -203,6 +223,8 @@ vendasRouter.post('/', async (req, res) => {
         data: {
           tenantId,
           tipo: 'SAIDA',
+          timestamp: dataDaVenda,
+          idLocal,
           valorTotal,
           desconto,
           taxas,
@@ -226,16 +248,33 @@ vendasRouter.post('/', async (req, res) => {
           where: { id: item.productId, tenantId, quantidadeEmEstoque: { gte: item.quantidade } },
           data: { quantidadeEmEstoque: { decrement: item.quantidade } },
         });
-        if (baixa.count === 0) throw new Error(`Estoque insuficiente para "${item.nomeProdutoSnapshot}".`);
-        await registrarMovimentacao(tx, { tenantId, produtoId: item.productId, tipo: 'VENDA', quantidade: -item.quantidade, usuarioId, referenciaId: novaTransacao.id });
+        let baixado = item.quantidade;
+        if (baixa.count === 0) {
+          if (!veioDaFila) throw new Error(`Estoque insuficiente para "${item.nomeProdutoSnapshot}".`);
+          // Venda da fila: zera o que sobrou (sem ficar negativo) e registra a diferença.
+          const atual = await tx.produto.findUniqueOrThrow({ where: { id: item.productId }, select: { quantidadeEmEstoque: true } });
+          baixado = Math.max(0, atual.quantidadeEmEstoque);
+          await tx.produto.update({ where: { id: item.productId }, data: { quantidadeEmEstoque: 0 } });
+          divergencias.push(`"${item.nomeProdutoSnapshot}": vendidas ${item.quantidade}, havia ${baixado} no estoque`);
+        }
+        await registrarMovimentacao(tx, {
+          tenantId, produtoId: item.productId, tipo: 'VENDA', quantidade: -baixado, usuarioId, referenciaId: novaTransacao.id,
+          motivo: baixado < item.quantidade ? `Venda offline sem saldo suficiente (vendidas ${item.quantidade})` : undefined,
+        });
       }
 
       return novaTransacao;
     });
 
     if (auditoriaDoAjuste) await registrarAuditoria(tenantId, usuarioId, 'venda.ajuste', auditoriaDoAjuste);
-    res.status(201).json(serializarTransacao(transacao));
+    if (divergencias.length > 0) await registrarAuditoria(tenantId, usuarioId, 'venda.estoque_divergente', divergencias.join('; '));
+    res.status(201).json({ ...serializarTransacao(transacao), avisos: divergencias.length > 0 ? [`Estoque divergente: ${divergencias.join('; ')}`] : undefined });
   } catch (e) {
+    // Duas requisições com o mesmo idLocal ao mesmo tempo: a segunda cai aqui (índice único) e recebe a venda da primeira.
+    if (idLocal && typeof e === 'object' && e && (e as { code?: string }).code === 'P2002') {
+      const existente = await prisma.transacao.findUnique({ where: { tenantId_idLocal: { tenantId, idLocal } }, include: { itens: true, pagamentos: true } });
+      if (existente) return res.status(200).json(serializarTransacao(existente));
+    }
     res.status(400).json({ erro: e instanceof Error ? e.message : 'Erro ao registrar venda.' });
   }
 });

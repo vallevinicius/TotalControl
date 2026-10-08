@@ -1,4 +1,5 @@
 import cors from 'cors';
+import { log, reportarErro } from '../lib/observabilidade.js';
 import type { ErrorRequestHandler, Request } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
@@ -68,6 +69,8 @@ export const tratarErros: ErrorRequestHandler = (erro, req, res, next) => {
   if (erro?.type === 'entity.too.large') return res.status(413).json({ erro: 'O conteúdo enviado é grande demais.' });
   if (erro?.type === 'entity.parse.failed') return res.status(400).json({ erro: 'Requisição inválida.' });
 
-  console.error(`Erro não tratado em ${req.method} ${req.originalUrl}:`, erro);
-  res.status(500).json({ erro: 'Ocorreu um erro inesperado. Tente novamente em instantes.' });
+  const rota = req.originalUrl.split('?')[0];
+  log('error', 'erro_nao_tratado', { id: req.idRequisicao, metodo: req.method, rota, erro: erro instanceof Error ? erro.stack ?? erro.message : String(erro) });
+  void reportarErro(erro, { idRequisicao: req.idRequisicao, metodo: req.method, rota, usuario: req.usuario?.id });
+  res.status(500).json({ erro: 'Ocorreu um erro inesperado. Tente novamente em instantes.', idRequisicao: req.idRequisicao });
 };

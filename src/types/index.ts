@@ -455,6 +455,7 @@ export interface RelatorioConsolidado {
 export interface ProdutoParaImportar {
   nome: string;
   sku: string;
+  codigoBarras?: string;
   categoria: string;
   precoCusto: number;
   precoVenda: number;

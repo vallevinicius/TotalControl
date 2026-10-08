@@ -220,3 +220,41 @@ O admin da Total Software não é um `Usuario` de loja — ele é modelado como
 próprios (`tipo: 'PLATAFORMA'`). O middleware `requireAuth` (rotas de loja) e
 `requirePlatformAdmin` (rotas `/api/admin`) se rejeitam mutuamente, então um
 token de loja nunca funciona no painel admin e vice-versa.
+
+### 7. Permissões por ação
+
+Além das telas (`permissoes`), cada usuário tem `acoes`: o que pode fazer dentro delas
+(cancelar venda, sangria, desconto alto, alterar preço, ajustar estoque, excluir registros).
+`null` usa o padrão do papel, uma lista vale como está, e ADMIN sempre pode tudo. A fonte é
+`server/src/config/acoes.ts`; as rotas usam `requerirAcao('...')` e o front esconde o botão
+(`src/utils/acoes.ts`), mas quem decide é sempre o servidor.
+
+### 8. Balcão (fase C)
+
+- **Pagamento dividido:** uma venda tem várias formas (`PagamentoVenda`). Crédito em até 3x é sem
+  juros; de 4x a 12x o servidor soma 5% sobre a parte paga no crédito (`server/src/config/pdv.ts`).
+  O front só mostra o valor, quem calcula é o servidor.
+- **Cancelar venda:** nada é apagado. A venda ganha `cancelada`, motivo e autor, o estoque volta
+  e ela sai de todos os relatórios (`VENDA_VALIDA` em `server/src/lib/vendas.ts`).
+- **Sangria e suprimento:** `MovimentoCaixa`, entram no valor esperado do fechamento.
+- **Venda em espera:** guardada no navegador (por loja e caixa), não no servidor.
+- **Código de barras:** campo `codigoBarras` no produto; no PDV, digitar/ler e dar Enter adiciona.
+
+### 9. Operação (fase D)
+
+- **Logs e Sentry:** `server/src/lib/observabilidade.ts`. Cada requisição recebe `X-Request-Id`
+  (vem também no corpo dos erros 500). Defina `SENTRY_DSN` para enviar erros; sem ele nada sai.
+- **Sessões:** `GET/DELETE /api/auth/sessoes` (tela Minha conta).
+- **Receita:** `GET /api/admin/receita` (MRR, churn, conversão do teste), no topo do painel admin.
+- **Transferência de estoque** entre lojas da empresa: `POST /api/estoque/transferir` (Enterprise).
+- O que ficou só preparado (cookie httpOnly, CSP, offline, captcha...) está em `docs/FASE_D.md`.
+
+### 10. PDV offline
+
+- **O que funciona sem internet:** abrir o app (service worker `public/sw.js` + última sessão confirmada), buscar produto por nome, SKU ou código de barras (catálogo guardado no aparelho, IndexedDB), escolher cliente e vendedor, vender e imprimir o comprovante. As vendas vão para uma fila no aparelho (`src/lib/offline.ts`) e são enviadas sozinhas quando a internet volta, na ordem em que aconteceram, com o horário real da venda.
+- **O que precisa de internet:** abrir e fechar caixa, sangria, suprimento, cancelar venda. Fechar o caixa também espera a fila esvaziar.
+- **Sem duplicar:** cada venda tem um `idLocal` e o servidor devolve a venda existente se receber o mesmo id de novo (`Transacao.idLocal`, único por loja).
+- **Estoque divergente:** se na hora do envio o saldo já não cobre a venda (outra loja ou aparelho vendeu antes), a venda é registrada mesmo assim, o estoque vai a zero (nunca negativo), e o aviso aparece na tela e na auditoria. A mercadoria já saiu do balcão, então recusar a venda só desorganizaria o caixa.
+- **Vendas recusadas:** se o servidor recusa (ex.: caixa já fechado por outro aparelho), a venda fica parada num aviso vermelho no PDV com "Tentar de novo" e "Descartar". Nada some sozinho.
+- **Só funciona no build de produção** (`npm run build && npm run preview`); em `npm run dev` o service worker fica desligado.
+- **Roteiro de teste:** build, `preview`, entre, abra o caixa e a tela do PDV (uma vez com internet); no DevTools, aba Network, marque "Offline"; recarregue (deve abrir), venda 2 itens (aparece "venda guardada"), desmarque "Offline" (deve enviar sozinho em segundos) e confira a venda nos relatórios.

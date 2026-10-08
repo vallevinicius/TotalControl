@@ -3,6 +3,7 @@ import { AppLayout } from '@/components/Layout/AppLayout';
 import { useTenant } from '@/contexts/TenantContext';
 import { useToast } from '@/contexts/ToastContext';
 import { alterarSenha, atualizarPerfil } from '@/services/apiService';
+import { SessoesAtivas } from './SessoesAtivas';
 import { mascararTelefone } from '@/utils/mascaras';
 
 const CAMPO =
@@ -127,6 +128,7 @@ export function MinhaContaScreen() {
             </button>
           </div>
         </form>
+        <SessoesAtivas />
       </div>
     </AppLayout>
   );

@@ -1,37 +1,39 @@
-import type { ReactNode } from 'react';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { TenantProvider, useTenant } from '@/contexts/TenantContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ConfirmProvider } from '@/contexts/ConfirmContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { LoadingState } from '@/components/Common/LoadingState';
-import { DashboardScreen } from '@/components/Dashboard/DashboardScreen';
-import { PDVScreen } from '@/components/PDV/PDVScreen';
-import { EstoqueScreen } from '@/components/Estoque/EstoqueScreen';
-import { ClientesScreen } from '@/components/Clientes/ClientesScreen';
-import { VendedoresScreen } from '@/components/Vendedores/VendedoresScreen';
-import { RelatoriosScreen } from '@/components/Relatorios/RelatoriosScreen';
-import { FinanceiroScreen } from '@/components/Financeiro/FinanceiroScreen';
-import { LojasScreen } from '@/components/Lojas/LojasScreen';
-import { LancamentosScreen } from '@/components/Financeiro/LancamentosScreen';
-import { ContasScreen } from '@/components/Financeiro/ContasScreen';
-import { UsuariosScreen } from '@/components/Usuarios/UsuariosScreen';
-import { MeuPlanoScreen } from '@/components/Conta/MeuPlanoScreen';
-import { AuditoriaScreen } from '@/components/Conta/AuditoriaScreen';
 import { LoginScreen } from '@/components/Auth/LoginScreen';
-import { RegisterScreen } from '@/components/Auth/RegisterScreen';
-import { EsqueciSenhaScreen } from '@/components/Auth/EsqueciSenhaScreen';
-import { RedefinirSenhaScreen } from '@/components/Auth/RedefinirSenhaScreen';
-import { MinhaContaScreen } from '@/components/Conta/MinhaContaScreen';
-import { EmpresaScreen } from '@/components/Conta/EmpresaScreen';
-import { AdminScreen } from '@/components/Admin/AdminScreen';
-import { LandingPage } from '@/components/Marketing/LandingPage';
 import { NotFoundScreen } from '@/components/Common/NotFoundScreen';
-import { TermosScreen } from '@/components/Legal/TermosScreen';
-import { PrivacidadeScreen } from '@/components/Legal/PrivacidadeScreen';
 import { podeVerTela } from '@/utils/permissoes';
 import { planoPermiteTela } from '@/utils/planos';
 import type { TelaComPermissao } from '@/types';
+
+// Cada tela vira um arquivo separado, baixado só quando a pessoa a abre (o carregamento inicial fica bem menor).
+const DashboardScreen = lazy(() => import('@/components/Dashboard/DashboardScreen').then((m) => ({ default: m.DashboardScreen })));
+const PDVScreen = lazy(() => import('@/components/PDV/PDVScreen').then((m) => ({ default: m.PDVScreen })));
+const EstoqueScreen = lazy(() => import('@/components/Estoque/EstoqueScreen').then((m) => ({ default: m.EstoqueScreen })));
+const ClientesScreen = lazy(() => import('@/components/Clientes/ClientesScreen').then((m) => ({ default: m.ClientesScreen })));
+const VendedoresScreen = lazy(() => import('@/components/Vendedores/VendedoresScreen').then((m) => ({ default: m.VendedoresScreen })));
+const RelatoriosScreen = lazy(() => import('@/components/Relatorios/RelatoriosScreen').then((m) => ({ default: m.RelatoriosScreen })));
+const FinanceiroScreen = lazy(() => import('@/components/Financeiro/FinanceiroScreen').then((m) => ({ default: m.FinanceiroScreen })));
+const LojasScreen = lazy(() => import('@/components/Lojas/LojasScreen').then((m) => ({ default: m.LojasScreen })));
+const LancamentosScreen = lazy(() => import('@/components/Financeiro/LancamentosScreen').then((m) => ({ default: m.LancamentosScreen })));
+const ContasScreen = lazy(() => import('@/components/Financeiro/ContasScreen').then((m) => ({ default: m.ContasScreen })));
+const UsuariosScreen = lazy(() => import('@/components/Usuarios/UsuariosScreen').then((m) => ({ default: m.UsuariosScreen })));
+const MeuPlanoScreen = lazy(() => import('@/components/Conta/MeuPlanoScreen').then((m) => ({ default: m.MeuPlanoScreen })));
+const AuditoriaScreen = lazy(() => import('@/components/Conta/AuditoriaScreen').then((m) => ({ default: m.AuditoriaScreen })));
+const RegisterScreen = lazy(() => import('@/components/Auth/RegisterScreen').then((m) => ({ default: m.RegisterScreen })));
+const EsqueciSenhaScreen = lazy(() => import('@/components/Auth/EsqueciSenhaScreen').then((m) => ({ default: m.EsqueciSenhaScreen })));
+const RedefinirSenhaScreen = lazy(() => import('@/components/Auth/RedefinirSenhaScreen').then((m) => ({ default: m.RedefinirSenhaScreen })));
+const MinhaContaScreen = lazy(() => import('@/components/Conta/MinhaContaScreen').then((m) => ({ default: m.MinhaContaScreen })));
+const EmpresaScreen = lazy(() => import('@/components/Conta/EmpresaScreen').then((m) => ({ default: m.EmpresaScreen })));
+const AdminScreen = lazy(() => import('@/components/Admin/AdminScreen').then((m) => ({ default: m.AdminScreen })));
+const LandingPage = lazy(() => import('@/components/Marketing/LandingPage').then((m) => ({ default: m.LandingPage })));
+const TermosScreen = lazy(() => import('@/components/Legal/TermosScreen').then((m) => ({ default: m.TermosScreen })));
+const PrivacidadeScreen = lazy(() => import('@/components/Legal/PrivacidadeScreen').then((m) => ({ default: m.PrivacidadeScreen })));
 
 function TelaCarregando() {
   return (
@@ -77,6 +79,16 @@ function RotaPublica({ children }: { children: ReactNode }) {
 }
 
 function Roteador() {
+  const { autenticado } = useTenant();
+  // Já logado: baixa em segundo plano a tela do PDV (e o service worker a guarda), para ela abrir mesmo sem internet.
+  useEffect(() => {
+    if (!autenticado) return;
+    const baixar = () => void import('@/components/PDV/PDVScreen');
+    const ocioso = (window as { requestIdleCallback?: (f: () => void) => number }).requestIdleCallback;
+    if (ocioso) ocioso(baixar);
+    else setTimeout(baixar, 2000);
+  }, [autenticado]);
+
   return (
     <Routes>
       <Route
@@ -243,7 +255,9 @@ export default function App() {
         <ConfirmProvider>
           <TenantProvider>
             <BrowserRouter>
-              <Roteador />
+              <Suspense fallback={<TelaCarregando />}>
+                <Roteador />
+              </Suspense>
             </BrowserRouter>
           </TenantProvider>
         </ConfirmProvider>

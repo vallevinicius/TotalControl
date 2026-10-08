@@ -20,6 +20,7 @@ import {
   limparTokenAdmin,
 } from '@/services/apiService';
 import type { EmpresaAdmin, LojaAdmin, PlanoSaaS } from '@/types';
+import { AdminReceita } from './AdminReceita';
 import { AdminResumo, emTrial } from './AdminResumo';
 import { EmpresaItem, type AcoesEmpresa } from './EmpresaItem';
 import { ModalExcluir, ModalSenhaGerada } from './AdminModais';
@@ -186,6 +187,7 @@ export function AdminScreen() {
           </div>
         ) : (
           <>
+            <AdminReceita />
             <AdminResumo empresas={empresas} />
 
             <div className="flex flex-wrap gap-3">

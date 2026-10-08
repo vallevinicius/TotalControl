@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { LojaResumo, Tenant, Usuario } from '@/types';
 import {
   getMe,
+  getMeGuardado,
   getToken,
   login as apiLogin,
   logout as apiLogout,
@@ -9,6 +10,7 @@ import {
   trocarLoja as apiTrocarLoja,
   type RegistrarLojaPayload,
 } from '@/services/apiService';
+import { ehFalhaDeConexao } from '@/lib/offline';
 
 /**
  * TenantContext
@@ -60,7 +62,15 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       setUsuarioAtual(usuario);
       setTenant(tenantCarregado);
       setLojas(lojasCarregadas);
-    } catch {
+    } catch (e) {
+      // Sem internet (e já entrou antes neste aparelho): abre com a última sessão confirmada, para o PDV seguir vendendo.
+      const guardado = ehFalhaDeConexao(e) ? getMeGuardado() : null;
+      if (guardado) {
+        setUsuarioAtual(guardado.usuario);
+        setTenant(guardado.tenant);
+        setLojas(guardado.lojas);
+        return;
+      }
       // Token ausente/expirado/inválido — volta ao estado deslogado.
       apiLogout();
       setTenant(null);
