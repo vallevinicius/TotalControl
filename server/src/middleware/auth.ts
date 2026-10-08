@@ -13,6 +13,7 @@ export interface UsuarioAutenticado {
   /** Preenchidos por requireAuth a partir do banco (não vêm no token, que pode estar velho). */
   raiz?: boolean;
   permissoes?: unknown;
+  acoes?: unknown;
 }
 
 export interface AdminAutenticado {
@@ -74,7 +75,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   // Dados frescos do banco (papel, permissões, conta principal): o token pode ter
   // dias e não reflete mudanças feitas depois do login.
-  let usuarioAtual: { papel: UsuarioAutenticado['papel']; raiz: boolean; permissoes: unknown };
+  let usuarioAtual: { papel: UsuarioAutenticado['papel']; raiz: boolean; permissoes: unknown; acoes: unknown };
   try {
     const { id: usuarioId, tenantId } = payload as UsuarioAutenticado;
     const [loja, usuario] = await Promise.all([
@@ -85,7 +86,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
           empresa: { select: { ativo: true, trialExpiraEm: true, assinaturaStatus: true, acessoAte: true } },
         },
       }),
-      prisma.usuario.findUnique({ where: { id: usuarioId }, select: { ativo: true, papel: true, raiz: true, permissoes: true, tokenVersion: true } }),
+      prisma.usuario.findUnique({ where: { id: usuarioId }, select: { ativo: true, papel: true, raiz: true, permissoes: true, acoes: true, tokenVersion: true } }),
     ]);
     // O token vale até expirar, então o estado de quem o usa é conferido a cada
     // requisição: usuário desativado, loja desativada ou empresa suspensa perdem
@@ -93,7 +94,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     if (!usuario?.ativo || !loja || (payload as UsuarioAutenticado).tv !== undefined && (payload as UsuarioAutenticado).tv !== usuario.tokenVersion) {
       return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
     }
-    usuarioAtual = { papel: usuario.papel, raiz: usuario.raiz, permissoes: usuario.permissoes };
+    usuarioAtual = { papel: usuario.papel, raiz: usuario.raiz, permissoes: usuario.permissoes, acoes: usuario.acoes };
     if (!loja.ativo) {
       return res.status(403).json({ erro: 'Esta loja foi desativada.' });
     }
@@ -111,7 +112,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return next(erro);
   }
 
-  req.usuario = { ...(payload as UsuarioAutenticado), papel: usuarioAtual.papel, raiz: usuarioAtual.raiz, permissoes: usuarioAtual.permissoes };
+  req.usuario = { ...(payload as UsuarioAutenticado), papel: usuarioAtual.papel, raiz: usuarioAtual.raiz, permissoes: usuarioAtual.permissoes, acoes: usuarioAtual.acoes };
   next();
 }
 

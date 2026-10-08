@@ -1,9 +1,11 @@
 import { Router } from 'express';
+import { VENDA_VALIDA, totaisPorForma } from '../lib/vendas.js';
+import { arredondar } from '../config/pdv.js';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { requerirAcao, requerirTela } from '../middleware/permissao.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 
 export const caixaRouter = Router();
@@ -40,24 +42,29 @@ function serializarCaixa(c: {
   };
 }
 
+/** Resumo do turno: vendas válidas (sem as canceladas), total por forma de pagamento e o
+ * dinheiro que DEVERIA estar na gaveta (abertura + vendas em dinheiro + suprimentos - sangrias). */
 async function calcularResumo(tenantId: string, caixaId: string) {
-  const vendas = await prisma.transacao.findMany({ where: { tenantId, caixaId, tipo: 'SAIDA' } });
+  const [caixa, vendas, movimentos] = await Promise.all([
+    prisma.caixa.findUniqueOrThrow({ where: { id: caixaId }, select: { valorAbertura: true } }),
+    prisma.transacao.findMany({ where: { tenantId, caixaId, ...VENDA_VALIDA }, include: { pagamentos: true } }),
+    prisma.movimentoCaixa.findMany({ where: { tenantId, caixaId }, orderBy: { criadoEm: 'asc' } }),
+  ]);
 
-  const totalVendido = Number(vendas.reduce((acc, v) => acc + Number(v.valorTotal), 0).toFixed(2));
-  const quantidadeVendas = vendas.length;
-
-  const porFormaPagamento = new Map<string, number>();
-  for (const v of vendas) {
-    const chave = v.formaPagamento ?? 'OUTRO';
-    porFormaPagamento.set(chave, (porFormaPagamento.get(chave) ?? 0) + Number(v.valorTotal));
-  }
+  const totalVendido = arredondar(vendas.reduce((acc, v) => acc + Number(v.valorTotal), 0));
+  const totaisPorFormaPagamento = totaisPorForma(vendas);
+  const totalSangrias = arredondar(movimentos.filter((m) => m.tipo === 'SANGRIA').reduce((a, m) => a + Number(m.valor), 0));
+  const totalSuprimentos = arredondar(movimentos.filter((m) => m.tipo === 'SUPRIMENTO').reduce((a, m) => a + Number(m.valor), 0));
+  const valorEsperadoEmDinheiro = arredondar(Number(caixa.valorAbertura) + (totaisPorFormaPagamento.DINHEIRO ?? 0) + totalSuprimentos - totalSangrias);
 
   return {
     totalVendido,
-    quantidadeVendas,
-    totaisPorFormaPagamento: Object.fromEntries(
-      Array.from(porFormaPagamento.entries()).map(([k, v]) => [k, Number(v.toFixed(2))]),
-    ),
+    quantidadeVendas: vendas.length,
+    totaisPorFormaPagamento,
+    totalSangrias,
+    totalSuprimentos,
+    valorEsperadoEmDinheiro,
+    movimentos: movimentos.map((m) => ({ id: m.id, tipo: m.tipo, valor: Number(m.valor), motivo: m.motivo, criadoEm: m.criadoEm.toISOString() })),
   };
 }
 
@@ -69,8 +76,8 @@ caixaRouter.get('/:id/vendas', async (req, res) => {
   if (!caixa) return res.status(404).json({ erro: 'Caixa não encontrado.' });
 
   const vendas = await prisma.transacao.findMany({
-    where: { tenantId, caixaId: caixa.id, tipo: 'SAIDA' },
-    include: { itens: true, cliente: true, vendedor: true },
+    where: { tenantId, caixaId: caixa.id, tipo: 'SAIDA' }, // inclui as canceladas, marcadas como tal
+    include: { itens: true, cliente: true, vendedor: true, pagamentos: true },
     orderBy: { timestamp: 'desc' },
   });
 
@@ -83,6 +90,9 @@ caixaRouter.get('/:id/vendas', async (req, res) => {
       clienteNome: v.cliente?.nome,
       vendedorNome: v.vendedor?.nome,
       quantidadeItens: v.itens.reduce((acc, i) => acc + i.quantidade, 0),
+      cancelada: v.cancelada,
+      motivoCancelamento: v.motivoCancelamento ?? undefined,
+      pagamentos: v.pagamentos.map((p) => ({ forma: p.forma, valor: Number(p.valor), parcelas: p.parcelas })),
       // Detalhe suficiente pra reemitir o comprovante da venda.
       clienteTelefone: v.cliente?.telefone ?? undefined,
       desconto: Number(v.desconto),
@@ -181,7 +191,12 @@ caixaRouter.post('/:id/fechar', async (req, res) => {
     `Total vendido: ${resumo.totalVendido.toFixed(2)} em ${resumo.quantidadeVendas} venda(s)`,
   );
 
-  res.json({ ...serializarCaixa(atualizado), resumo });
+  res.json({
+    ...serializarCaixa(atualizado),
+    resumo,
+    // Contado - esperado: sobra (+) ou falta (-) de dinheiro na gaveta.
+    diferencaNoFechamento: parse.data.valorContado === undefined ? undefined : arredondar(parse.data.valorContado - resumo.valorEsperadoEmDinheiro),
+  });
 });
 
 caixaRouter.get('/', async (req, res) => {
@@ -195,7 +210,7 @@ caixaRouter.get('/', async (req, res) => {
 
   const totais = await prisma.transacao.groupBy({
     by: ['caixaId'],
-    where: { tenantId, tipo: 'SAIDA', caixaId: { in: caixas.map((c) => c.id) } },
+    where: { tenantId, ...VENDA_VALIDA, caixaId: { in: caixas.map((c) => c.id) } },
     _sum: { valorTotal: true },
     _count: { _all: true },
   });
@@ -213,4 +228,34 @@ caixaRouter.get('/', async (req, res) => {
       };
     }),
   );
+});
+
+const movimentoSchema = z.object({
+  tipo: z.enum(['SANGRIA', 'SUPRIMENTO']),
+  valor: z.number().positive(),
+  motivo: z.string().trim().min(3, 'Explique o motivo.').max(191),
+});
+
+/** Sangria (tira dinheiro da gaveta) ou suprimento (coloca troco). Só com o caixa aberto e
+ * com a ação "sangria e suprimento"; a sangria não pode passar do dinheiro que há na gaveta. */
+caixaRouter.post('/:id/movimentos', requerirAcao('caixa.sangria'), async (req, res) => {
+  const { tenantId, id: usuarioId } = req.usuario!;
+  const parse = movimentoSchema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' });
+
+  const caixa = await prisma.caixa.findFirst({ where: { id: req.params.id, tenantId } });
+  if (!caixa) return res.status(404).json({ erro: 'Caixa não encontrado.' });
+  if (caixa.status !== 'ABERTO') return res.status(409).json({ erro: 'Esse caixa já está fechado.' });
+
+  const { tipo, valor, motivo } = parse.data;
+  if (tipo === 'SANGRIA') {
+    const { valorEsperadoEmDinheiro } = await calcularResumo(tenantId, caixa.id);
+    if (valor > valorEsperadoEmDinheiro + 0.004) {
+      return res.status(400).json({ erro: `A sangria é maior que o dinheiro que deveria estar na gaveta (R$ ${valorEsperadoEmDinheiro.toFixed(2)}).` });
+    }
+  }
+
+  const movimento = await prisma.movimentoCaixa.create({ data: { tenantId, caixaId: caixa.id, tipo, valor, motivo, usuarioId } });
+  await registrarAuditoria(tenantId, usuarioId, tipo === 'SANGRIA' ? 'caixa.sangria' : 'caixa.suprimento', `R$ ${valor.toFixed(2)}: ${motivo}`);
+  res.status(201).json({ id: movimento.id, tipo, valor, motivo, criadoEm: movimento.criadoEm.toISOString() });
 });

@@ -19,8 +19,8 @@ export function FecharCaixaModal({ caixa, aoFechar, aoConfirmar }: FecharCaixaMo
   const [observacao, setObservacao] = useState('');
   const [enviando, setEnviando] = useState(false);
 
-  const dinheiroVendido = caixa.resumo.totaisPorFormaPagamento?.DINHEIRO ?? 0;
-  const valorEsperado = Number((caixa.valorAbertura + dinheiroVendido).toFixed(2));
+  // O servidor já considera vendas em dinheiro, suprimentos e sangrias.
+  const valorEsperado = caixa.resumo.valorEsperadoEmDinheiro ?? Number((caixa.valorAbertura + (caixa.resumo.totaisPorFormaPagamento?.DINHEIRO ?? 0)).toFixed(2));
   const diferenca = informarContagem ? Number((valorContado - valorEsperado).toFixed(2)) : 0;
 
   async function handleConfirmar() {
@@ -57,6 +57,18 @@ export function FecharCaixaModal({ caixa, aoFechar, aoConfirmar }: FecharCaixaMo
                 <span className="font-mono">{formatarMoeda(valor, tenant)}</span>
               </div>
             ))}
+          {(caixa.resumo.totalSuprimentos ?? 0) > 0 && (
+            <div className="flex justify-between text-ink-300">
+              <span>(+) Suprimentos</span>
+              <span className="font-mono">{formatarMoeda(caixa.resumo.totalSuprimentos ?? 0, tenant)}</span>
+            </div>
+          )}
+          {(caixa.resumo.totalSangrias ?? 0) > 0 && (
+            <div className="flex justify-between text-ink-300">
+              <span>(-) Sangrias</span>
+              <span className="font-mono">-{formatarMoeda(caixa.resumo.totalSangrias ?? 0, tenant)}</span>
+            </div>
+          )}
           <div className="my-1 border-t border-ink-700" />
           <div className="flex justify-between font-medium text-ink-100">
             <span>Esperado em dinheiro no caixa</span>

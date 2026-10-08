@@ -13,6 +13,8 @@ export interface DadosComprovante {
   total: number;
   formaPagamento?: FormaPagamento;
   parcelas?: number;
+  /** Venda dividida: cada forma com o valor que cobriu. */
+  pagamentos?: Array<{ forma: FormaPagamento; valor: number; parcelas: number }>;
   /** Só para pagamento em dinheiro. */
   valorRecebido?: number;
   troco?: number;
@@ -51,9 +53,11 @@ export function ComprovanteModal({ dados, aoFechar }: { dados: DadosComprovante;
       ...dados.itens.map((i) => `${i.quantidade}x ${i.nome}  ${moeda(i.subtotal)}`),
       '',
       dados.desconto > 0 ? `Desconto: -${moeda(dados.desconto)}` : '',
-      dados.taxas > 0 ? `Taxa do cartão: ${moeda(dados.taxas)}` : '',
+      dados.taxas > 0 ? `Juros do cartão: ${moeda(dados.taxas)}` : '',
       `*Total: ${moeda(dados.total)}*`,
-      forma ? `Pagamento: ${forma}${dados.parcelas && dados.parcelas > 1 ? ` em ${dados.parcelas}x` : ''}` : '',
+      ...(dados.pagamentos && dados.pagamentos.length > 1
+        ? dados.pagamentos.map((p) => `${formatarFormaPagamento(p.forma)}${p.parcelas > 1 ? ` ${p.parcelas}x` : ''}: ${moeda(p.valor)}`)
+        : [forma ? `Pagamento: ${forma}${dados.parcelas && dados.parcelas > 1 ? ` em ${dados.parcelas}x` : ''}` : '']),
       dados.troco && dados.troco > 0 ? `Troco: ${moeda(dados.troco)}` : '',
       '',
       'Obrigado pela preferência!',
@@ -108,7 +112,7 @@ export function ComprovanteModal({ dados, aoFechar }: { dados: DadosComprovante;
             )}
             {dados.taxas > 0 && (
               <p className="flex justify-between">
-                <span>Taxa do cartão</span>
+                <span>Juros do cartão</span>
                 <span>{moeda(dados.taxas)}</span>
               </p>
             )}
@@ -116,14 +120,26 @@ export function ComprovanteModal({ dados, aoFechar }: { dados: DadosComprovante;
               <span>TOTAL</span>
               <span>{moeda(dados.total)}</span>
             </p>
-            {forma && (
-              <p className="flex justify-between">
-                <span>Pagamento</span>
-                <span>
-                  {forma}
-                  {dados.parcelas && dados.parcelas > 1 ? ` ${dados.parcelas}x` : ''}
-                </span>
-              </p>
+            {dados.pagamentos && dados.pagamentos.length > 1 ? (
+              dados.pagamentos.map((p, i) => (
+                <p key={i} className="flex justify-between">
+                  <span>
+                    {formatarFormaPagamento(p.forma)}
+                    {p.parcelas > 1 ? ` ${p.parcelas}x` : ''}
+                  </span>
+                  <span>{moeda(p.valor)}</span>
+                </p>
+              ))
+            ) : (
+              forma && (
+                <p className="flex justify-between">
+                  <span>Pagamento</span>
+                  <span>
+                    {forma}
+                    {dados.parcelas && dados.parcelas > 1 ? ` ${dados.parcelas}x` : ''}
+                  </span>
+                </p>
+              )
             )}
             {dados.valorRecebido !== undefined && dados.valorRecebido > 0 && (
               <>

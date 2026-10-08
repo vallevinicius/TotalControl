@@ -7,9 +7,10 @@ import { ModalSenhaGerada } from '@/components/Admin/AdminModais';
 import { useConfirm } from '@/contexts/ConfirmContext';
 import { getUsuarios, createUsuario, resetarSenhaDeUsuario, setUsuarioAtivo, atualizarAcessoUsuario, concederAcessoLoja } from '@/services/apiService';
 import { slugificarNomeLoja } from '@/utils/slug';
+import { ACOES_DISPONIVEIS, ACOES_PADRAO_POR_PAPEL, mesmasAcoes } from '@/utils/acoes';
 import { TELAS_COM_PERMISSAO, PERMISSOES_PADRAO_POR_PAPEL } from '@/utils/permissoes';
 import { LIMITES_POR_PLANO } from '@/utils/planos';
-import type { PapelUsuario, TelaComPermissao, Usuario } from '@/types';
+import type { AcaoUsuario, PapelUsuario, TelaComPermissao, Usuario } from '@/types';
 
 const rotulosPapel: Record<string, string> = {
   ADMIN: 'Admin',
@@ -35,7 +36,7 @@ function PermissoesChecklist({ papel, selecionadas, aoAlterar }: PermissoesCheck
   }
 
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
       {TELAS_COM_PERMISSAO.filter((tela) => tela.chave !== 'vendedores').map((tela) => (
         <label
           key={tela.chave}
@@ -58,6 +59,39 @@ function PermissoesChecklist({ papel, selecionadas, aoAlterar }: PermissoesCheck
       <p className="col-span-3 mt-1 text-xs text-ink-500">
         "Vendedores" não aparece aqui: só a conta principal da loja tem acesso a essa tela.
       </p>
+    </div>
+  );
+}
+
+function AcoesChecklist({ papel, selecionadas, aoAlterar }: { papel: PapelUsuario; selecionadas: AcaoUsuario[]; aoAlterar: (a: AcaoUsuario[]) => void }) {
+  if (papel === 'ADMIN') return <p className="text-xs text-ink-400">Admin sempre pode todas as ações.</p>;
+  const padrao = ACOES_PADRAO_POR_PAPEL[papel];
+  return (
+    <div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {ACOES_DISPONIVEIS.map((a) => {
+          const marcada = selecionadas.includes(a.chave);
+          return (
+            <label key={a.chave} title={a.dica} className={['flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-xs', marcada ? 'border-tenant bg-tenant-soft text-tenant' : 'border-ink-600 text-ink-300'].join(' ')}>
+              <input
+                type="checkbox"
+                checked={marcada}
+                onChange={() => aoAlterar(marcada ? selecionadas.filter((x) => x !== a.chave) : [...selecionadas, a.chave])}
+                className="mt-0.5 accent-tenant"
+              />
+              <span>
+                {a.rotulo}
+                <span className="block text-[11px] font-normal text-ink-500">{a.dica}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {!mesmasAcoes(selecionadas, padrao) && (
+        <button type="button" onClick={() => aoAlterar(padrao)} className="mt-2 text-xs font-medium text-tenant hover:underline">
+          Voltar ao padrão do papel
+        </button>
+      )}
     </div>
   );
 }
@@ -86,6 +120,8 @@ export function UsuariosScreen() {
   const [senha, setSenha] = useState('');
   const [papel, setPapel] = useState<PapelUsuario>('OPERADOR_CAIXA');
   const [permissoes, setPermissoes] = useState<TelaComPermissao[]>(PERMISSOES_PADRAO_POR_PAPEL.OPERADOR_CAIXA);
+  const [acoesNovo, setAcoesNovo] = useState<AcaoUsuario[]>(ACOES_PADRAO_POR_PAPEL.OPERADOR_CAIXA);
+  const [acoesEdicao, setAcoesEdicao] = useState<AcaoUsuario[]>([]);
   const [enviando, setEnviando] = useState(false);
   // Convite por e-mail (e-mail real, a pessoa cria a própria senha) x login da loja (você define a senha).
   const [modoConvite, setModoConvite] = useState(false);
@@ -104,6 +140,7 @@ export function UsuariosScreen() {
 
   function handleMudarPapel(novoPapel: PapelUsuario) {
     setPapel(novoPapel);
+    setAcoesNovo(ACOES_PADRAO_POR_PAPEL[novoPapel]);
     setPermissoes(PERMISSOES_PADRAO_POR_PAPEL[novoPapel] ?? ['dashboard']);
   }
 
@@ -115,11 +152,11 @@ export function UsuariosScreen() {
     try {
       if (modoConvite) {
         const email = emailConvite.trim().toLowerCase();
-        await createUsuario({ nome: nome.trim(), email, convidarPorEmail: true, papel, permissoes });
+        await createUsuario({ nome: nome.trim(), email, convidarPorEmail: true, papel, permissoes, acoes: mesmasAcoes(acoesNovo, ACOES_PADRAO_POR_PAPEL[papel]) ? undefined : acoesNovo });
         toast.sucesso(`Convite enviado para ${email}.`);
       } else {
         const email = `${emailLocal.trim()}@${dominio}.com`;
-        await createUsuario({ nome: nome.trim(), email, senha, papel, permissoes });
+        await createUsuario({ nome: nome.trim(), email, senha, papel, permissoes, acoes: mesmasAcoes(acoesNovo, ACOES_PADRAO_POR_PAPEL[papel]) ? undefined : acoesNovo });
         toast.sucesso(`Login "${email}" criado.`);
       }
       setNome('');
@@ -194,11 +231,13 @@ export function UsuariosScreen() {
     setUsuarioEditando(usuario);
     setPapelEdicao(usuario.papel);
     setPermissoesEdicao(usuario.permissoes ?? PERMISSOES_PADRAO_POR_PAPEL[usuario.papel] ?? ['dashboard']);
+    setAcoesEdicao(usuario.acoesEfetivas ?? ACOES_PADRAO_POR_PAPEL[usuario.papel]);
   }
 
   function handleMudarPapelEdicao(novoPapel: PapelUsuario) {
     setPapelEdicao(novoPapel);
     setPermissoesEdicao(PERMISSOES_PADRAO_POR_PAPEL[novoPapel] ?? ['dashboard']);
+    setAcoesEdicao(ACOES_PADRAO_POR_PAPEL[novoPapel]);
   }
 
   async function salvarPermissoesEdicao() {
@@ -208,6 +247,8 @@ export function UsuariosScreen() {
       await atualizarAcessoUsuario(usuarioEditando.id, {
         papel: papelEdicao !== usuarioEditando.papel ? papelEdicao : undefined,
         permissoes: papelEdicao === 'ADMIN' ? undefined : permissoesEdicao,
+        // Igual ao padrão do papel = sem personalização (null); senão, a lista exata.
+        acoes: papelEdicao === 'ADMIN' ? undefined : mesmasAcoes(acoesEdicao, ACOES_PADRAO_POR_PAPEL[papelEdicao]) ? null : acoesEdicao,
       });
       toast.sucesso(`Acesso de "${usuarioEditando.nome}" atualizado.`);
       setUsuarioEditando(null);
@@ -352,6 +393,11 @@ export function UsuariosScreen() {
             <PermissoesChecklist papel={papel} selecionadas={permissoes} aoAlterar={setPermissoes} />
           </div>
 
+          <div className="col-span-2">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">O que essa pessoa pode fazer</p>
+            <AcoesChecklist papel={papel} selecionadas={acoesNovo} aoAlterar={setAcoesNovo} />
+          </div>
+
           <div className="col-span-2 flex justify-end">
             <button
               type="submit"
@@ -447,7 +493,7 @@ export function UsuariosScreen() {
 
       {usuarioEditando && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true">
-          <div className="w-full max-w-md rounded-xl border border-ink-700 bg-ink-800 p-6">
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-xl border border-ink-700 bg-ink-800 p-6">
             <p className="font-display text-lg font-semibold text-ink-100">Acesso de {usuarioEditando.nome}</p>
             <p className="mt-1 text-sm text-ink-400">O que essa pessoa pode ver no sistema.</p>
 
@@ -475,6 +521,11 @@ export function UsuariosScreen() {
               <PermissoesChecklist papel={papelEdicao} selecionadas={permissoesEdicao} aoAlterar={setPermissoesEdicao} />
             </div>
 
+            <div className="mt-5">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-400">O que essa pessoa pode fazer</p>
+              <AcoesChecklist papel={papelEdicao} selecionadas={acoesEdicao} aoAlterar={setAcoesEdicao} />
+            </div>
+
             <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={() => setUsuarioEditando(null)}
@@ -499,7 +550,7 @@ export function UsuariosScreen() {
           <div className="w-full max-w-sm rounded-xl border border-ink-700 bg-ink-800 p-6">
             <p className="font-display text-lg font-semibold text-ink-100">Lojas de {usuarioParaAcesso.nome}</p>
             <p className="mt-1 text-sm text-ink-400">
-              Conceda acesso a outra loja da sua empresa | a pessoa passa a poder trocar pra ela com o mesmo login.
+              Conceda acesso a outra loja da sua empresa: a pessoa passa a poder trocar pra ela com o mesmo login.
             </p>
 
             <div className="mt-4 space-y-2">

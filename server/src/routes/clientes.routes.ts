@@ -1,9 +1,10 @@
 import { Router } from 'express';
+import { VENDA_VALIDA } from '../lib/vendas.js';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../middleware/auth.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
-import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { requerirAcao, requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { lerPaginacao, montarResposta } from '../lib/paginacao.js';
 
 export const clientesRouter = Router();
@@ -148,7 +149,7 @@ clientesRouter.get('/:id/historico', async (req, res) => {
   if (!cliente) return res.status(404).json({ erro: 'Cliente não encontrado.' });
 
   const vendas = await prisma.transacao.findMany({
-    where: { tenantId, clienteId: cliente.id, tipo: 'SAIDA' },
+    where: { tenantId, clienteId: cliente.id, ...VENDA_VALIDA },
     include: { itens: true },
     orderBy: { timestamp: 'desc' },
     take: 50,
@@ -168,7 +169,7 @@ clientesRouter.get('/:id/historico', async (req, res) => {
   });
 });
 
-clientesRouter.delete('/:id', async (req, res) => {
+clientesRouter.delete('/:id', requerirAcao('registros.excluir'), async (req, res) => {
   const { tenantId } = req.usuario!;
   const cliente = await prisma.cliente.findFirst({ where: { id: req.params.id, tenantId } });
   if (!cliente) return res.status(404).json({ erro: 'Cliente não encontrado.' });

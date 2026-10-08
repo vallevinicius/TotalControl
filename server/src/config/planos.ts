@@ -73,12 +73,3 @@ export function motivoAcessoExpirado(e: EmpresaParaAcesso, agora = new Date()): 
   if (e.assinaturaStatus !== 'ATIVA' && e.trialExpiraEm && e.trialExpiraEm < agora) return 'TRIAL';
   return null;
 }
-
-/** Política de preço e desconto no PDV, por papel (aplicada no servidor, não só
- * escondida na tela). Desconto em % do subtotal da venda; preço manual é mudar
- * o preço de um item para algo diferente do cadastrado. */
-export const POLITICA_PDV = {
-  OPERADOR_CAIXA: { descontoMaximoPercentual: 5, podeAlterarPreco: false },
-  GERENTE: { descontoMaximoPercentual: 20, podeAlterarPreco: true },
-  ADMIN: { descontoMaximoPercentual: 100, podeAlterarPreco: true },
-} as const;

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { VENDA_VALIDA } from '../lib/vendas.js';
 import jwt from 'jsonwebtoken';
 import QRCode from 'qrcode';
 import crypto from 'node:crypto';
@@ -160,7 +161,7 @@ adminRouter.get('/empresas', async (_req, res) => {
     prisma.produto.groupBy({ by: ['tenantId'], where: { tenantId: { in: idsLojas }, ativo: true }, _count: { _all: true } }),
     prisma.transacao.groupBy({
       by: ['tenantId'],
-      where: { tenantId: { in: idsLojas }, tipo: 'SAIDA', timestamp: { gte: inicioDoMes } },
+      where: { tenantId: { in: idsLojas }, ...VENDA_VALIDA, timestamp: { gte: inicioDoMes } },
       _sum: { valorTotal: true },
       _count: { _all: true },
       _max: { timestamp: true },

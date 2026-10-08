@@ -80,7 +80,7 @@ export function VendedoresScreen() {
       {mostrarFormulario && (
         <form
           onSubmit={handleSubmit}
-          className="mb-6 grid grid-cols-3 gap-4 rounded-xl border border-ink-700 bg-ink-800 p-6"
+          className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3 rounded-xl border border-ink-700 bg-ink-800 p-6"
         >
           <label className="col-span-2 block text-sm text-ink-300">
             Nome

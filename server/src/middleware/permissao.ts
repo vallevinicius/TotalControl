@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { ACOES, podeFazer, type Acao } from '../config/acoes.js';
 
 export type Tela = 'dashboard' | 'pdv' | 'estoque' | 'financeiro' | 'clientes' | 'vendedores' | 'relatorios';
 
@@ -42,4 +43,12 @@ export function requerirAdmin(req: Request, res: Response, next: NextFunction) {
     return res.status(403).json({ erro: 'Só administradores da loja podem fazer isso.' });
   }
   next();
+}
+
+/** Exige uma ação específica (ver config/acoes.ts). A mensagem diz o que faltou. */
+export function requerirAcao(acao: Acao) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.usuario && podeFazer(req.usuario, acao)) return next();
+    return res.status(403).json({ erro: `Seu perfil não tem permissão para: ${ACOES[acao].toLowerCase()}. Peça a um administrador.` });
+  };
 }

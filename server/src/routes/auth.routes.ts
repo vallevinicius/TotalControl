@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { emitirSessao, renovarSessao, revogarSessao, revogarTodasAsSessoes } from '../lib/sessao.js';
 import { emailRecuperacaoDeSenha, emailSenhaAlterada, enviarEmail } from '../lib/email.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
+import { acoesEfetivas, descontoMaximoPercentual } from '../config/acoes.js';
 import { mensagemDeValidacao, senhaForte, VERSAO_TERMOS } from '../lib/senha.js';
 import { calcularTrialExpiraEm, LIMITES_POR_PLANO, motivoAcessoExpirado } from '../config/planos.js';
 
@@ -265,6 +266,9 @@ authRouter.get('/me', requireAuth, async (req, res) => {
       telefone: usuario.telefone ?? undefined,
       papel: usuario.papel,
       permissoes: (usuario.permissoes as string[] | null) ?? undefined,
+      // Ações finas que valem hoje (cancelar venda, sangria...) e o desconto máximo do PDV.
+      acoes: acoesEfetivas(usuario),
+      descontoMaximo: descontoMaximoPercentual(usuario),
       raiz: usuario.raiz,
       ativo: usuario.ativo,
     },

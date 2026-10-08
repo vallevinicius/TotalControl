@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { registrarMovimentacao } from '../lib/movimentacaoEstoque.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
+import { requerirAcao, requerirAdmin, requerirTela } from '../middleware/permissao.js';
 
 export const estoqueRouter = Router();
 estoqueRouter.use(requireAuth, requerirTela(['estoque']));
@@ -87,9 +87,8 @@ const ajusteSchema = z.object({
 /** Ajuste de inventário: corrige o saldo para a contagem real, sempre com um motivo
  * (quebra, perda, contagem...). Fica no histórico do produto e na auditoria. Só
  * administrador e gerente: ajustar saldo é o jeito clássico de esconder desvio. */
-estoqueRouter.post('/ajuste', async (req, res) => {
-  const { tenantId, id: usuarioId, papel } = req.usuario!;
-  if (papel === 'OPERADOR_CAIXA') return res.status(403).json({ erro: 'Só gerente ou administrador ajusta o estoque.' });
+estoqueRouter.post('/ajuste', requerirAcao('estoque.ajustar'), async (req, res) => {
+  const { tenantId, id: usuarioId } = req.usuario!;
 
   const parse = ajusteSchema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ erro: parse.error.issues[0]?.message ?? 'Dados inválidos.' });

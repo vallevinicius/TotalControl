@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { VENDA_VALIDA, totaisPorForma } from '../lib/vendas.js';
 import { prisma } from '../lib/prisma.js';
 import { diaNoFuso, diasDoPeriodo } from '../lib/datas.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -27,7 +28,7 @@ relatoriosRouter.get('/consolidado', requireFeaturePlano('multiLoja'), async (re
   const vendas = await prisma.transacao.findMany({
     where: {
       tenantId: { in: lojas.map((l) => l.id) },
-      tipo: 'SAIDA',
+      ...VENDA_VALIDA,
       timestamp: { gte: inicio ?? undefined, lte: fim ?? undefined },
     },
   });
@@ -71,13 +72,13 @@ relatoriosRouter.get('/vendas', async (req, res) => {
   const vendas = await prisma.transacao.findMany({
     where: {
       tenantId,
-      tipo: 'SAIDA',
+      ...VENDA_VALIDA,
       timestamp: {
         gte: inicio ?? undefined,
         lte: fim ?? undefined,
       },
     },
-    include: { itens: true, cliente: true, vendedor: true },
+    include: { itens: true, cliente: true, vendedor: true, pagamentos: true },
     orderBy: { timestamp: 'desc' },
   });
 
@@ -85,11 +86,7 @@ relatoriosRouter.get('/vendas', async (req, res) => {
   const quantidadeVendas = vendas.length;
   const ticketMedio = quantidadeVendas > 0 ? Number((faturamentoTotal / quantidadeVendas).toFixed(2)) : 0;
 
-  const totaisPorFormaPagamento = new Map<string, number>();
-  for (const v of vendas) {
-    const chave = v.formaPagamento ?? 'OUTRO';
-    totaisPorFormaPagamento.set(chave, (totaisPorFormaPagamento.get(chave) ?? 0) + Number(v.valorTotal));
-  }
+  const totaisPorFormaPagamento = totaisPorForma(vendas);
 
   const acumuladoPorProduto = new Map<string, { nome: string; quantidade: number; receita: number }>();
   for (const venda of vendas) {
@@ -147,9 +144,7 @@ relatoriosRouter.get('/vendas', async (req, res) => {
     faturamentoTotal,
     quantidadeVendas,
     ticketMedio,
-    totaisPorFormaPagamento: Object.fromEntries(
-      Array.from(totaisPorFormaPagamento.entries()).map(([k, v]) => [k, Number(v.toFixed(2))]),
-    ),
+    totaisPorFormaPagamento,
     produtosMaisVendidos,
     vendasPorVendedor,
     vendas: vendas.map((v) => ({
@@ -184,7 +179,7 @@ relatoriosRouter.get('/serie-diaria', async (req, res) => {
   fim.setUTCDate(fim.getUTCDate() + 1); // folga de fuso; o filtro final é por dia local
   const inicio = new Date(`${p.inicio}T00:00:00Z`);
   inicio.setUTCDate(inicio.getUTCDate() - 1);
-  const vendas = await prisma.transacao.findMany({ where: { tenantId, tipo: 'SAIDA', timestamp: { gte: inicio, lte: fim } }, select: { timestamp: true, valorTotal: true } });
+  const vendas = await prisma.transacao.findMany({ where: { tenantId, ...VENDA_VALIDA, timestamp: { gte: inicio, lte: fim } }, select: { timestamp: true, valorTotal: true } });
 
   const porDia = new Map(dias.map((d) => [d, { data: d, faturamento: 0, vendas: 0 }]));
   for (const v of vendas) {
@@ -207,7 +202,7 @@ relatoriosRouter.get('/curva-abc', async (req, res) => {
   const fim = new Date(p.fim);
   fim.setUTCHours(23, 59, 59, 999);
   const itens = await prisma.itemTransacao.findMany({
-    where: { transacao: { tenantId, tipo: 'SAIDA', timestamp: { gte: new Date(p.inicio), lte: fim } } },
+    where: { transacao: { tenantId, ...VENDA_VALIDA, timestamp: { gte: new Date(p.inicio), lte: fim } } },
     select: { productId: true, nomeProdutoSnapshot: true, quantidade: true, subtotal: true },
   });
 
@@ -252,7 +247,7 @@ relatoriosRouter.get('/estoque-parado', async (req, res) => {
     prisma.produto.findMany({ where: { tenantId, ativo: true, quantidadeEmEstoque: { gt: 0 } }, select: { id: true, nome: true, sku: true, quantidadeEmEstoque: true, precoCusto: true } }),
     prisma.itemTransacao.groupBy({
       by: ['productId'],
-      where: { transacao: { tenantId, tipo: 'SAIDA', timestamp: { gte: desde } } },
+      where: { transacao: { tenantId, ...VENDA_VALIDA, timestamp: { gte: desde } } },
     }),
   ]);
   const comVenda = new Set(vendidos.map((v) => v.productId));
