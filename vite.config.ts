@@ -27,6 +27,17 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Bibliotecas que quase nunca mudam ficam em arquivos próprios: o navegador as guarda em cache entre as versões do app.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          animacao: ['framer-motion'],
+        },
+      },
+    },
+  },
   server: {
     port: 3099,
     // Repassa as chamadas de API pro Express (porta 4000) por trás do mesmo

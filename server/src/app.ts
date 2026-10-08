@@ -22,6 +22,7 @@ import { adminRouter } from './routes/admin.routes.js';
 import { auditoriaRouter } from './routes/auditoria.routes.js';
 import { tenantRouter } from './routes/tenant.routes.js';
 import { prisma } from './lib/prisma.js';
+import { registrarRequisicoes } from './lib/observabilidade.js';
 import {
   configurarCors,
   limiteCadastro,
@@ -43,6 +44,7 @@ export const app = express();
 // pra req.ip refletir o IP real do cliente (senão o limite vale pro proxy todo).
 if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
 
+app.use(registrarRequisicoes);
 app.use(helmet());
 app.use(configurarCors());
 // Só a logo da loja (imagem em base64) precisa de corpo grande; o resto aceita

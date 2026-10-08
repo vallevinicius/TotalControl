@@ -217,6 +217,15 @@ export function MeuPlanoScreen() {
               <div>
                 <p className="text-xs uppercase tracking-wide text-ink-500">Plano atual</p>
                 <p className="font-display text-2xl font-semibold text-ink-100">{ROTULOS_PLANO[tenant.planoAtual]}</p>
+                <p className="mt-0.5 text-xs text-ink-400">
+                  {assinatura.status === 'ATIVA'
+                    ? `${formatarMoeda(assinatura.precos[tenant.planoAtual as 'STARTER' | 'PRO'] ?? 0, tenant)} por mês, cobrado no Mercado Pago`
+                    : assinatura.status === 'CANCELADA'
+                      ? 'Assinatura cancelada'
+                      : gerenciadoPelaEquipe
+                        ? 'Plano combinado com a equipe'
+                        : 'Sem cobrança recorrente ativa (teste ou cortesia)'}
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {estado && <span className={`rounded-full px-3 py-1 text-xs font-medium ${tonsSituacao[estado.tom]}`}>{estado.texto}</span>}
@@ -263,10 +272,13 @@ export function MeuPlanoScreen() {
               <div className="grid gap-4 md:grid-cols-3">
                 {(['STARTER', 'PRO'] as const).map((plano) => {
                   const botao = rotuloBotao(plano);
-                  const atual = assinatura.status === 'ATIVA' && assinatura.plano === plano;
+                  const atual = tenant.planoAtual === plano;
                   return (
                     <div key={plano} className={['flex flex-col rounded-xl border bg-ink-800 p-5', atual ? 'border-tenant' : 'border-ink-700'].join(' ')}>
-                      <p className="font-display text-lg font-semibold text-ink-100">{ROTULOS_PLANO[plano]}</p>
+                      <p className="flex items-center gap-2 font-display text-lg font-semibold text-ink-100">
+                        {ROTULOS_PLANO[plano]}
+                        {atual && <span className="rounded-full bg-tenant/15 px-2 py-0.5 font-sans text-[10px] font-medium text-tenant">Seu plano</span>}
+                      </p>
                       <p className="mt-2">
                         <span className="font-display text-2xl font-bold text-ink-100">{formatarMoeda(assinatura.precos[plano], tenant)}</span>
                         <span className="ml-1 text-sm text-ink-400">/mês</span>
@@ -371,16 +383,22 @@ export function MeuPlanoScreen() {
             </div>
           )}
 
-          {assinatura.status === 'ATIVA' && contaPrincipal && !gerenciadoPelaEquipe && (
+          {contaPrincipal && !gerenciadoPelaEquipe && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-700 p-5">
               <div>
                 <p className="text-sm font-medium text-ink-200">Cancelar assinatura</p>
-                <p className="text-xs text-ink-500">Você continua usando até o fim do período já pago. Sem multa.</p>
+                <p className="text-xs text-ink-500">
+                  {assinatura.status === 'ATIVA'
+                    ? 'Você continua usando até o fim do período já pago. Sem multa.'
+                    : assinatura.status === 'CANCELADA'
+                      ? `Já cancelada${assinatura.acessoAte ? `: você usa até ${dataCurta(assinatura.acessoAte)}` : ''}.`
+                      : 'Você não tem uma assinatura paga ativa para cancelar. Ao assinar um plano acima, o cancelamento aparece aqui.'}
+                </p>
               </div>
               <button
                 onClick={cancelar}
-                disabled={trabalhando !== null}
-                className="rounded-lg border border-red-500/40 px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-500/10 disabled:opacity-40"
+                disabled={assinatura.status !== 'ATIVA' || trabalhando !== null}
+                className="rounded-lg border border-red-500/40 px-4 py-2 text-sm font-medium text-red-400 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {trabalhando === 'cancelar' ? 'Cancelando…' : 'Cancelar assinatura'}
               </button>

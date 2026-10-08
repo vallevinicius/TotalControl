@@ -285,6 +285,9 @@ model Transacao {
   canceladaEm       DateTime?
   canceladaPorId    String?
   motivoCancelamento String?
+  /// Identificador gerado pelo PDV no aparelho. Torna o envio da venda idempotente: reenviar a
+  /// mesma venda (rede instável, fila offline) devolve a que já existe em vez de duplicar.
+  idLocal    String?
 
   tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   usuario  Usuario         @relation(fields: [usuarioId], references: [id])
@@ -294,6 +297,7 @@ model Transacao {
   itens    ItemTransacao[]
   pagamentos PagamentoVenda[]
 
+  @@unique([tenantId, idLocal])
   @@index([tenantId, timestamp])
   @@index([vendedorId])
   @@index([caixaId])
@@ -436,6 +440,8 @@ enum TipoMovimentacaoEstoque {
   VENDA
   ESTORNO
   AJUSTE
+  /// Saída/entrada entre lojas da mesma empresa (plano com multiLoja).
+  TRANSFERENCIA
 }
 
 /// Livro-razão do estoque: cada vez que o saldo de um produto muda, uma linha com

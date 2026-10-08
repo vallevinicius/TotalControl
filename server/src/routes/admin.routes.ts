@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { assinarTokenAdmin, requirePlatformAdmin } from '../middleware/auth.js';
-import { calcularTrialExpiraEm } from '../config/planos.js';
+import { calcularTrialExpiraEm, PRECOS_MENSAIS } from '../config/planos.js';
 import { cpfValido, normalizarCnpj } from '../lib/documentos.js';
 import { mensagemDeValidacao, senhaForte } from '../lib/senha.js';
 import { gerarSegredoTotp, urlOtpauth, verificarTotp } from '../lib/totp.js';
@@ -253,6 +253,41 @@ const novaEmpresaSchema = z.object({
   telefoneAdmin: textoOpcional,
   emailAdmin: z.string().email(),
   senhaAdmin: senhaForte,
+});
+
+/** Receita recorrente e saúde da base. O Enterprise não entra no MRR (preço negociado à mão):
+ * aparece só como contagem, para você somar por fora. */
+adminRouter.get('/receita', async (_req, res) => {
+  const agora = new Date();
+  const ha30Dias = new Date(agora.getTime() - 30 * 86_400_000);
+  const empresas = await prisma.empresa.findMany({
+    select: { planoAtual: true, assinaturaStatus: true, trialExpiraEm: true, canceladaEm: true, acessoAte: true, ativo: true },
+  });
+
+  const ativas = empresas.filter((e) => e.ativo && e.assinaturaStatus === 'ATIVA');
+  const porPlano = { STARTER: 0, PRO: 0, ENTERPRISE: 0 } as Record<'STARTER' | 'PRO' | 'ENTERPRISE', number>;
+  for (const e of ativas) if (e.planoAtual in porPlano) porPlano[e.planoAtual as keyof typeof porPlano]++;
+
+  const mrr = porPlano.STARTER * PRECOS_MENSAIS.STARTER + porPlano.PRO * PRECOS_MENSAIS.PRO;
+  const canceladas30d = empresas.filter((e) => e.canceladaEm && e.canceladaEm >= ha30Dias).length;
+  const emTrial = empresas.filter((e) => e.assinaturaStatus !== 'ATIVA' && e.trialExpiraEm && e.trialExpiraEm > agora).length;
+  const trialPerdido = empresas.filter((e) => e.assinaturaStatus === 'NENHUMA' && e.trialExpiraEm && e.trialExpiraEm <= agora).length;
+  const quemJaPagou = ativas.length + empresas.filter((e) => e.assinaturaStatus === 'CANCELADA').length;
+
+  res.json({
+    mrr: Math.round(mrr * 100) / 100,
+    arr: Math.round(mrr * 12 * 100) / 100,
+    assinantesAtivos: ativas.length,
+    assinantesPorPlano: porPlano,
+    cobrancaFalhou: empresas.filter((e) => e.assinaturaStatus === 'PAUSADA').length,
+    canceladas30d,
+    /** Cancelamentos dos últimos 30 dias sobre (ativas + canceladas nesse período). */
+    churn30d: ativas.length + canceladas30d > 0 ? Math.round((canceladas30d / (ativas.length + canceladas30d)) * 1000) / 10 : 0,
+    emTrial,
+    trialExpiradoSemAssinar: trialPerdido,
+    /** De todas as empresas que já passaram do teste, quantas viraram assinantes (percentual). */
+    conversaoTrial: quemJaPagou + trialPerdido > 0 ? Math.round((quemJaPagou / (quemJaPagou + trialPerdido)) * 1000) / 10 : 0,
+  });
 });
 
 adminRouter.post('/empresas', async (req, res) => {

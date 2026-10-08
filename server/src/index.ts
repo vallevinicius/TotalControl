@@ -2,13 +2,18 @@ import { app } from './app.js';
 import { garantirAdminPlataforma } from './lib/adminBootstrap.js';
 import { limparSessoesAntigas } from './lib/sessao.js';
 import { executarAvisos } from './lib/avisos.js';
+import { log, reportarErro } from './lib/observabilidade.js';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 
 
-process.on('unhandledRejection', (motivo) => console.error('Promessa rejeitada sem tratamento:', motivo));
-process.on('uncaughtException', (erro) => {
-  console.error('Exceção não capturada, encerrando:', erro);
+process.on('unhandledRejection', (motivo) => {
+  log('error', 'promessa_rejeitada', { erro: motivo instanceof Error ? motivo.stack ?? motivo.message : String(motivo) });
+  void reportarErro(motivo);
+});
+process.on('uncaughtException', async (erro) => {
+  log('error', 'excecao_nao_capturada', { erro: erro.stack ?? erro.message });
+  await reportarErro(erro); // dá tempo de o aviso sair antes do processo cair
   process.exit(1);
 });
 
@@ -18,7 +23,7 @@ garantirAdminPlataforma()
   .catch((erro) => console.error('Não foi possível preparar o admin da plataforma:', erro))
   .finally(() => {
     app.listen(PORT, () => {
-      console.log(`API rodando em http://localhost:${PORT}`);
+      log('info', `API rodando em http://localhost:${PORT}`);
     });
     // Faxina das renovações vencidas: na subida e a cada 6 horas.
     const faxina = () => limparSessoesAntigas().catch((e) => console.error('Falha na limpeza de sessões:', e));

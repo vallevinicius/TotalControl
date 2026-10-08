@@ -1,3 +1,4 @@
+import { marcarApiForaDoAr } from '@/lib/offline';
 import type {
   Caixa,
   Categoria,
@@ -67,6 +68,7 @@ export function setToken(token: string, refreshToken?: string): void {
 }
 
 export function limparToken(): void {
+  localStorage.removeItem('tc.me');
   localStorage.removeItem(CHAVE_TOKEN);
   localStorage.removeItem(CHAVE_REFRESH);
 }
@@ -94,14 +96,16 @@ function tenantDoToken(token: string | null): string | undefined {
   }
 }
 
-let renovacaoEmAndamento: Promise<boolean> | null = null;
+/** 'sem-rede': não deu para falar com a API (a sessão continua valendo, não é motivo para deslogar). */
+type ResultadoRenovacao = 'ok' | 'rejeitada' | 'sem-rede';
+let renovacaoEmAndamento: Promise<ResultadoRenovacao> | null = null;
 
 /** Troca o token de renovação por um par novo. Várias requisições que vencem
  * juntas compartilham UMA renovação (senão a segunda usaria um token já trocado
  * e a API derrubaria a sessão como suspeita de roubo). */
-function renovarSessao(): Promise<boolean> {
+function renovarSessao(): Promise<ResultadoRenovacao> {
   const refreshToken = localStorage.getItem(CHAVE_REFRESH);
-  if (!refreshToken) return Promise.resolve(false);
+  if (!refreshToken) return Promise.resolve('rejeitada');
 
   renovacaoEmAndamento ??= (async () => {
     try {
@@ -110,12 +114,13 @@ function renovarSessao(): Promise<boolean> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken, tenantId: tenantDoToken(getToken()) }),
       });
-      if (!resposta.ok) return false;
+      if (resposta.status >= 500) return 'sem-rede';
+      if (!resposta.ok) return 'rejeitada';
       const { token, refreshToken: novo } = await resposta.json();
       setToken(token, novo);
-      return true;
+      return 'ok';
     } catch {
-      return false;
+      return 'sem-rede';
     } finally {
       renovacaoEmAndamento = null;
     }
@@ -125,14 +130,22 @@ function renovarSessao(): Promise<boolean> {
 
 async function requisitar<T>(caminho: string, opcoes: RequestInit = {}, jaRenovou = false): Promise<T> {
   const token = getToken();
-  const resposta = await fetch(`${API_URL}${caminho}`, {
-    ...opcoes,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...opcoes.headers,
-    },
-  });
+  let resposta: Response;
+  try {
+    resposta = await fetch(`${API_URL}${caminho}`, {
+      ...opcoes,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...opcoes.headers,
+      },
+    });
+  } catch (e) {
+    marcarApiForaDoAr(true); // sem rede: o PDV passa a guardar as vendas no aparelho
+    throw e;
+  }
+  // Gateway sem a API atrás (proxy responde 502/503/504) também é "fora do ar".
+  marcarApiForaDoAr(resposta.status === 502 || resposta.status === 503 || resposta.status === 504);
 
   if (!resposta.ok) {
     let mensagem = `Erro ${resposta.status} ao chamar ${caminho}`;
@@ -145,8 +158,14 @@ async function requisitar<T>(caminho: string, opcoes: RequestInit = {}, jaRenovo
       // corpo sem JSON — mantém mensagem genérica
     }
     // Token de acesso vencido (a cada ~30 min): renova em silêncio e repete a chamada uma vez.
-    if (resposta.status === 401 && codigo === 'TOKEN_EXPIRADO' && !jaRenovou && (await renovarSessao())) {
-      return requisitar<T>(caminho, opcoes, true);
+    if (resposta.status === 401 && codigo === 'TOKEN_EXPIRADO' && !jaRenovou) {
+      const renovacao = await renovarSessao();
+      if (renovacao === 'ok') return requisitar<T>(caminho, opcoes, true);
+      // Sem internet o token vencido não dá para renovar agora: não é logout, é só "sem conexão".
+      if (renovacao === 'sem-rede') {
+        marcarApiForaDoAr(true);
+        throw new TypeError('sem conexão');
+      }
     }
     throw new ErroApi(mensagem, resposta.status, codigo);
   }
@@ -201,8 +220,27 @@ export async function registrarLoja(payload: RegistrarLojaPayload): Promise<void
   setToken(token, refreshToken);
 }
 
-export async function getMe(): Promise<{ usuario: Usuario; tenant: Tenant; lojas: LojaResumo[] }> {
-  return requisitar('/auth/me');
+type SessaoMe = { usuario: Usuario; tenant: Tenant; lojas: LojaResumo[] };
+const CHAVE_ME = 'tc.me';
+
+export async function getMe(): Promise<SessaoMe> {
+  const me = await requisitar<SessaoMe>('/auth/me');
+  try {
+    localStorage.setItem(CHAVE_ME, JSON.stringify(me));
+  } catch {
+    // cheio/bloqueado: só perde a abertura offline
+  }
+  return me;
+}
+
+/** Última sessão que o servidor confirmou, para abrir o app sem internet. Só vale se ainda há token guardado. */
+export function getMeGuardado(): SessaoMe | null {
+  try {
+    if (!getToken()) return null;
+    return JSON.parse(localStorage.getItem(CHAVE_ME) ?? 'null') as SessaoMe | null;
+  } catch {
+    return null;
+  }
 }
 
 /** Pede o link de redefinição por e-mail (a resposta é a mesma exista ou não a conta). */
@@ -484,7 +522,7 @@ export async function definirAvisosPorEmail(ativo: boolean): Promise<void> {
 export async function exportarDadosDaEmpresa(): Promise<string> {
   const token = getToken();
   const resposta = await fetch(`${API_URL}/tenant/exportar`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (resposta.status === 401 && (await renovarSessao())) return exportarDadosDaEmpresa();
+  if (resposta.status === 401 && (await renovarSessao()) === 'ok') return exportarDadosDaEmpresa();
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
     throw new ErroApi(corpo?.erro ?? 'Não foi possível exportar os dados.', resposta.status);
@@ -671,9 +709,13 @@ export interface NovaVendaPayload {
   pagamentos?: Array<{ forma: FormaPagamento; valor: number; parcelas?: number }>;
   clienteId?: string;
   vendedorId?: string;
+  /** Identificador da venda gerado no aparelho: reenviar a mesma venda não duplica. */
+  idLocal?: string;
+  /** Quando a venda aconteceu de verdade (ISO), para as feitas offline. */
+  vendidaEm?: string;
 }
 
-export async function registerSale(payload: NovaVendaPayload): Promise<Transacao> {
+export async function registerSale(payload: NovaVendaPayload): Promise<Transacao & { avisos?: string[] }> {
   return requisitar('/vendas', { method: 'POST', body: JSON.stringify(payload) });
 }
 
@@ -966,3 +1008,39 @@ export async function atualizarAparencia(
 ): Promise<{ logoDaLojaUrl: string; corPrincipalDoTema: string; corPrincipalHover?: string }> {
   return requisitar('/tenant/aparencia', { method: 'PUT', body: JSON.stringify(payload) });
 }
+
+export interface SessaoAtiva {
+  id: string;
+  criadaEm: string;
+  ip?: string;
+  dispositivo?: string;
+  atual: boolean;
+}
+
+const cabecalhoSessao = (): Record<string, string> => {
+  const refresh = localStorage.getItem(CHAVE_REFRESH);
+  return refresh ? { 'X-Refresh-Token': refresh } : {};
+};
+
+export const getSessoesAtivas = (): Promise<SessaoAtiva[]> => requisitar('/auth/sessoes', { headers: cabecalhoSessao() });
+export const encerrarSessao = (id: string): Promise<unknown> =>
+  requisitar(`/auth/sessoes/${id}`, { method: 'DELETE', headers: cabecalhoSessao() });
+
+export interface ReceitaAdmin {
+  mrr: number;
+  arr: number;
+  assinantesAtivos: number;
+  assinantesPorPlano: { STARTER: number; PRO: number; ENTERPRISE: number };
+  cobrancaFalhou: number;
+  canceladas30d: number;
+  churn30d: number;
+  emTrial: number;
+  trialExpiradoSemAssinar: number;
+  conversaoTrial: number;
+}
+
+export const adminReceita = (): Promise<ReceitaAdmin> => requisitarAdmin('/receita');
+
+export const getLojasDestino = (): Promise<Array<{ id: string; nomeFantasia: string }>> => requisitar('/estoque/lojas-destino');
+export const transferirEstoque = (dados: { destinoTenantId: string; itens: Array<{ productId: string; quantidade: number }>; observacao?: string }): Promise<{ destino: string }> =>
+  requisitar('/estoque/transferir', { method: 'POST', body: JSON.stringify(dados) });

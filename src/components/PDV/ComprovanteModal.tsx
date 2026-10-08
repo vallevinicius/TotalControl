@@ -21,6 +21,8 @@ export interface DadosComprovante {
   clienteNome?: string;
   clienteTelefone?: string;
   vendedorNome?: string;
+  /** Venda feita sem internet: ainda não chegou ao servidor. */
+  pendenteDeEnvio?: boolean;
 }
 
 /** Telefone só com dígitos e DDI 55 (formato do link wa.me); null se não parece telefone. */
@@ -71,8 +73,10 @@ export function ComprovanteModal({ dados, aoFechar }: { dados: DadosComprovante;
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 print:static print:bg-transparent print:p-0" role="dialog" aria-modal="true">
       <div className="flex max-h-[92vh] w-full max-w-sm flex-col rounded-xl border border-ink-700 bg-ink-800 print:max-h-none print:border-0 print:bg-transparent">
         <div className="border-b border-ink-700 px-5 py-4 print:hidden">
-          <p className="font-display text-lg font-semibold text-ink-100">Venda concluída</p>
-          <p className="text-sm text-ink-400">Entregue o comprovante ao cliente.</p>
+          <p className="font-display text-lg font-semibold text-ink-100">{dados.pendenteDeEnvio ? 'Venda guardada (sem internet)' : 'Venda concluída'}</p>
+          <p className="text-sm text-ink-400">
+            {dados.pendenteDeEnvio ? 'Ela será enviada sozinha quando a conexão voltar. Pode entregar o comprovante.' : 'Entregue o comprovante ao cliente.'}
+          </p>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 print:overflow-visible print:p-0">
@@ -85,6 +89,7 @@ export function ComprovanteModal({ dados, aoFechar }: { dados: DadosComprovante;
             {tenant?.telefone && <p className="text-center">Tel. {tenant.telefone}</p>}
             <p className="my-2 border-t border-dashed border-black" />
             <p>{quando}</p>
+            {dados.pendenteDeEnvio && <p className="font-bold">VENDA REGISTRADA SEM INTERNET</p>}
             {dados.clienteNome && <p>Cliente: {dados.clienteNome}</p>}
             {dados.vendedorNome && <p>Vendedor: {dados.vendedorNome}</p>}
             <p className="my-2 border-t border-dashed border-black" />

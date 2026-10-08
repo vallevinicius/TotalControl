@@ -7,7 +7,7 @@ interface ImportarProdutosModalProps {
   aoImportar: (produtos: ProdutoParaImportar[]) => Promise<void>;
 }
 
-const COLUNAS_ESPERADAS = 'nome;sku;categoria;precoCusto;precoVenda;quantidadeEmEstoque;estoqueMinimo';
+const COLUNAS_ESPERADAS = 'nome;sku;categoria;precoCusto;precoVenda;quantidadeEmEstoque;estoqueMinimo;codigoBarras';
 
 function linhasParaProdutos(linhas: Array<Record<string, string>>): { produtos: ProdutoParaImportar[]; erros: string[] } {
   const produtos: ProdutoParaImportar[] = [];
@@ -33,6 +33,7 @@ function linhasParaProdutos(linhas: Array<Record<string, string>>): { produtos: 
     produtos.push({
       nome,
       sku,
+      codigoBarras: linha.codigobarras?.trim() || undefined,
       categoria,
       precoCusto,
       precoVenda,
@@ -89,6 +90,7 @@ export function ImportarProdutosModal({ aoFechar, aoImportar }: ImportarProdutos
           Arquivo CSV (separado por vírgula ou ponto e vírgula) com as colunas:
         </p>
         <p className="mt-1 rounded-lg bg-ink-900 px-3 py-2 font-mono text-xs text-ink-300">{COLUNAS_ESPERADAS}</p>
+        <p className="mt-1 text-[11px] text-ink-500">A coluna codigoBarras é opcional.</p>
 
         <label className="mt-4 block text-sm text-ink-300">
           Arquivo

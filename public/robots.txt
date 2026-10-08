@@ -10,3 +10,13 @@ Disallow: /relatorios
 Disallow: /usuarios
 Disallow: /plano
 Disallow: /auditoria
+Disallow: /conta
+Disallow: /empresa
+Disallow: /lojas
+Disallow: /login
+Disallow: /registrar
+Disallow: /esqueci-senha
+Disallow: /redefinir-senha
+
+# Troque pelo domínio real ao publicar (o sitemap.xml tem o mesmo aviso).
+Sitemap: https://SEU-DOMINIO.com.br/sitemap.xml
