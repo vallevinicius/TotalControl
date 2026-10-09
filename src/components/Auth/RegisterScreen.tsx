@@ -1,4 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
+import { Captcha, CHAVE_CAPTCHA } from './Captcha';
+import { ConfirmeEmail } from './ConfirmeEmail';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useTenant } from '@/contexts/TenantContext';
@@ -48,6 +50,9 @@ function Col({ span = 6, children }: { span?: 2 | 3 | 4 | 6; children: ReactNode
 
 export function RegisterScreen() {
   const { registrar } = useTenant();
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [reiniciarCaptcha, setReiniciarCaptcha] = useState(0);
+  const [emailCadastrado, setEmailCadastrado] = useState<string | null>(null);
   const toast = useToast();
   const navigate = useNavigate();
   const reduzirMovimento = useReducedMotion();
@@ -166,6 +171,7 @@ export function RegisterScreen() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!aceitouTermos) return;
+    if (CHAVE_CAPTCHA && !captchaToken) return toast.erro('Conclua a verificação de segurança antes de continuar.');
     if (!cnpjValido(cnpj)) return toast.erro('CNPJ inválido. Confira os números.');
     if (cpfAdmin && !cpfValido(cpfAdmin)) return toast.erro('CPF do responsável inválido.');
     if (senha !== confirmarSenha) return toast.erro('As senhas não conferem.');
@@ -196,15 +202,18 @@ export function RegisterScreen() {
         telefoneAdmin: telefoneAdmin || undefined,
         email,
         senha,
+        captchaToken: captchaToken ?? undefined,
       });
-      toast.sucesso('Loja criada com sucesso.');
-      navigate('/', { replace: true });
+      setEmailCadastrado(email);
     } catch (erro) {
       toast.erro(erro instanceof Error ? erro.message : 'Erro ao criar a loja.');
+      setReiniciarCaptcha((n) => n + 1); // o token do captcha vale uma vez só
     } finally {
       setEnviando(false);
     }
   }
+
+  if (emailCadastrado) return <ConfirmeEmail email={emailCadastrado} />;
 
   return (
     <div className="relative min-h-screen w-full bg-ink-900">
@@ -518,9 +527,13 @@ export function RegisterScreen() {
               .
             </AuthCheckbox>
 
+            <div className="mt-5">
+              <Captcha aoMudar={setCaptchaToken} reiniciar={reiniciarCaptcha} />
+            </div>
+
             <button
               type="submit"
-              disabled={enviando || !aceitouTermos}
+              disabled={enviando || !aceitouTermos || Boolean(CHAVE_CAPTCHA && !captchaToken)}
               className="mt-5 w-full rounded-lg bg-tenant py-3 text-sm font-semibold text-tenant-foreground shadow-sm shadow-tenant/20 transition-all hover:shadow-md hover:shadow-tenant/25 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
             >
               {enviando ? 'Criando loja…' : 'Criar minha loja'}

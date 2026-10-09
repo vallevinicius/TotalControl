@@ -183,7 +183,9 @@ describe('cadastro', () => {
     const dados = corpo({ cnpj: '22.333.444/0001-81' });
     const r = await request(app).post('/api/auth/register').send(dados);
     expect(r.status).toBe(201);
-    expect(r.body.refreshToken).toBeTruthy();
+    // Sem sessão: a pessoa só entra depois de confirmar o e-mail.
+    expect(r.body).toEqual({ pendenteVerificacao: true, email: dados.email });
+    expect(r.body.refreshToken).toBeUndefined();
     const u = await prisma.usuario.findUniqueOrThrow({ where: { email: dados.email } });
     expect(u.aceiteTermosEm).not.toBeNull();
     expect(u.aceiteTermosVersao).toBeTruthy();

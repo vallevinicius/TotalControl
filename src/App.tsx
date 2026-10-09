@@ -25,6 +25,7 @@ const ContasScreen = lazy(() => import('@/components/Financeiro/ContasScreen').t
 const UsuariosScreen = lazy(() => import('@/components/Usuarios/UsuariosScreen').then((m) => ({ default: m.UsuariosScreen })));
 const MeuPlanoScreen = lazy(() => import('@/components/Conta/MeuPlanoScreen').then((m) => ({ default: m.MeuPlanoScreen })));
 const AuditoriaScreen = lazy(() => import('@/components/Conta/AuditoriaScreen').then((m) => ({ default: m.AuditoriaScreen })));
+const VerificarEmailScreen = lazy(() => import('@/components/Auth/VerificarEmailScreen').then((m) => ({ default: m.VerificarEmailScreen })));
 const RegisterScreen = lazy(() => import('@/components/Auth/RegisterScreen').then((m) => ({ default: m.RegisterScreen })));
 const EsqueciSenhaScreen = lazy(() => import('@/components/Auth/EsqueciSenhaScreen').then((m) => ({ default: m.EsqueciSenhaScreen })));
 const RedefinirSenhaScreen = lazy(() => import('@/components/Auth/RedefinirSenhaScreen').then((m) => ({ default: m.RedefinirSenhaScreen })));
@@ -107,6 +108,7 @@ function Roteador() {
           </RotaPublica>
         }
       />
+      <Route path="/verificar-email" element={<VerificarEmailScreen />} />
       {/* Aberta mesmo com sessão: quem clica no link do e-mail pode já estar logado neste navegador. */}
       <Route path="/redefinir-senha" element={<RedefinirSenhaScreen />} />
       <Route

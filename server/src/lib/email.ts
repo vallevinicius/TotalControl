@@ -74,6 +74,18 @@ export function emailRecuperacaoDeSenha(nome: string, link: string): Omit<EmailP
   };
 }
 
+export function emailVerificacao(nome: string, link: string): Omit<EmailParaEnviar, 'para'> {
+  return {
+    assunto: 'Confirme seu e-mail no Total Control',
+    texto: `Olá, ${nome}.\n\nBem-vindo ao Total Control! Para liberar o acesso à sua conta, confirme seu e-mail no link abaixo (vale por 24 horas):\n\n${link}\n\nSe você não criou uma conta, ignore este e-mail.`,
+    html: modelo(
+      'Confirme seu e-mail',
+      [`Olá, ${nome}.`, 'Bem-vindo ao Total Control! Para liberar o acesso à sua conta, confirme seu e-mail. O link vale por 24 horas.', 'Se você não criou uma conta, ignore este e-mail.'],
+      { texto: 'Confirmar e-mail', url: link },
+    ),
+  };
+}
+
 export function emailSenhaAlterada(nome: string): Omit<EmailParaEnviar, 'para'> {
   return {
     assunto: 'Sua senha do Total Control foi alterada',

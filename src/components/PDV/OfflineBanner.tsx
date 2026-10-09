@@ -23,9 +23,9 @@ export function OfflineBanner({ online, fila, tenant, sincronizando, aoEnviar, a
   return (
     <div className="mb-4 space-y-2">
       {!online && (
-        <div role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+        <div role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-ink-100">
           <p className="font-medium">Sem conexão com a internet</p>
-          <p className="mt-0.5 text-xs text-amber-300/80">
+          <p className="mt-0.5 text-xs text-ink-300">
             Pode continuar vendendo. As vendas ficam guardadas neste aparelho e são enviadas sozinhas quando a internet voltar. Fechar o caixa, cancelar venda e sangria precisam de conexão.
           </p>
         </div>
@@ -49,16 +49,16 @@ export function OfflineBanner({ online, fila, tenant, sincronizando, aoEnviar, a
 
       {recusadas.map((v) => (
         <div key={v.idLocal} className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm">
-          <p className="font-medium text-red-300">
+          <p className="font-medium text-red-500">
             Venda de {formatarMoeda(v.total, tenant)} não foi aceita ({new Date(v.criadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })})
           </p>
-          <p className="mt-0.5 text-xs text-red-200/80">{v.erro}</p>
-          <p className="mt-0.5 text-xs text-red-200/60">{v.resumo}</p>
+          <p className="mt-0.5 text-xs text-ink-300">{v.erro}</p>
+          <p className="mt-0.5 text-xs text-ink-400">{v.resumo}</p>
           <div className="mt-2 flex gap-2">
-            <button onClick={() => aoTentarDeNovo(v.idLocal)} disabled={!online} className="rounded-lg border border-red-400/40 px-3 py-1 text-xs text-red-200 hover:bg-red-500/10 disabled:opacity-40">
+            <button onClick={() => aoTentarDeNovo(v.idLocal)} disabled={!online} className="rounded-lg border border-red-400/40 px-3 py-1 text-xs text-ink-100 hover:bg-red-500/10 disabled:opacity-40">
               Tentar de novo
             </button>
-            <button onClick={() => aoDescartar(v)} className="rounded-lg px-3 py-1 text-xs text-red-300 hover:underline">
+            <button onClick={() => aoDescartar(v)} className="rounded-lg px-3 py-1 text-xs text-red-500 hover:underline">
               Descartar
             </button>
           </div>

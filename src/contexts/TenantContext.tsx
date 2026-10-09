@@ -33,7 +33,7 @@ interface TenantContextValue {
   erro: string | null;
   autenticado: boolean;
   login: (email: string, senha: string) => Promise<void>;
-  registrar: (payload: RegistrarLojaPayload) => Promise<void>;
+  registrar: (payload: RegistrarLojaPayload) => Promise<{ email: string }>;
   logout: () => void;
   trocarLoja: (tenantId: string) => Promise<void>;
   recarregarSessao: () => Promise<void>;
@@ -101,8 +101,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   async function registrar(payload: RegistrarLojaPayload) {
     setErro(null);
     try {
-      await registrarLoja(payload);
-      await carregarSessao();
+      return await registrarLoja(payload); // não entra: falta confirmar o e-mail
     } catch (e) {
       const mensagem = e instanceof Error ? e.message : 'Erro ao registrar loja.';
       setErro(mensagem);

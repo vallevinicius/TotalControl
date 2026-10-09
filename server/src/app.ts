@@ -57,6 +57,8 @@ app.post('/api/auth/login', limiteLoginPorIp, limiteLoginPorConta);
 app.post('/api/auth/register', limiteCadastro);
 app.post('/api/auth/refresh', limiteRefresh);
 app.post('/api/auth/esqueci-senha', limiteEsqueciSenha);
+app.post('/api/auth/reenviar-verificacao', limiteEsqueciSenha);
+app.post('/api/auth/verificar-email', limiteRedefinirSenha);
 app.post('/api/auth/redefinir-senha', limiteRedefinirSenha);
 app.post('/api/auth/alterar-senha', limiteRedefinirSenha);
 app.delete('/api/tenant/conta', limiteRedefinirSenha);

@@ -4,6 +4,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import { useToast } from '@/contexts/ToastContext';
 import { ErroApi, confirmarCodigoAdmin, loginAdmin } from '@/services/apiService';
 import { AuthLayout } from './AuthLayout';
+import { ConfirmeEmail } from './ConfirmeEmail';
 import { AuthInput } from './AuthInput';
 import { AuthCheckbox } from './AuthCheckbox';
 import { IconeEmail, IconeSenha } from './icones';
@@ -29,6 +30,8 @@ export function LoginScreen() {
   // Admin com verificação em duas etapas: depois da senha, pede o código do app.
   const [desafioAdmin, setDesafioAdmin] = useState<string | null>(null);
   const [codigo, setCodigo] = useState('');
+  // Conta criada mas sem o e-mail confirmado: mostra a tela de "confirme seu e-mail" com o reenvio.
+  const [emailPendente, setEmailPendente] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -47,6 +50,11 @@ export function LoginScreen() {
       // plataforma antes de desistir. Outros status (ex: 403 de loja
       // suspensa/trial expirado) já têm mensagem própria e não devem cair
       // nessa segunda tentativa.
+      if (erro instanceof ErroApi && erro.codigo === 'EMAIL_NAO_VERIFICADO') {
+        setEmailPendente(email);
+        setEnviando(false);
+        return;
+      }
       if (!(erro instanceof ErroApi) || erro.status !== 401) {
         toast.erro(erro instanceof Error ? erro.message : 'Erro ao entrar.');
         setEnviando(false);
@@ -87,6 +95,8 @@ export function LoginScreen() {
       setEnviando(false);
     }
   }
+
+  if (emailPendente) return <ConfirmeEmail email={emailPendente} />;
 
   if (desafioAdmin) {
     return (

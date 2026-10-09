@@ -10,7 +10,7 @@
 
 ## Preparado, depende de decisão ou de infraestrutura
 
-(O PDV offline saiu desta lista: está feito.)
+(O PDV offline e a verificação de e-mail com captcha saíram desta lista: estão feitos.)
 
 ### Token em cookie httpOnly
 Hoje o token fica no `localStorage` (um XSS o roubaria). Para trocar:
@@ -28,8 +28,8 @@ Servir `index.html` com:
 ### PDV offline (feito, ver README seção 10)
 Falta só validar num aparelho real (veja o roteiro de teste no README).
 
-### Verificação de e-mail e captcha no cadastro
-Contra criação em massa de testes grátis. Passos: campo `emailVerificadoEm` no `Usuario`, link de uso único (mesmo modelo do `TokenSenha`), bloquear o 1º login pago até verificar; captcha (Cloudflare Turnstile) validado no `POST /auth/register` antes de criar a empresa.
+### Verificação de e-mail e captcha no cadastro (feito, ver README seção 11)
+Para ligar em produção: crie o widget no Cloudflare Turnstile e preencha `TURNSTILE_SECRET_KEY` (servidor) e `VITE_TURNSTILE_SITE_KEY` (front). Se o front tiver CSP, libere `https://challenges.cloudflare.com` em `script-src`, `frame-src` e `connect-src`.
 
 ### Preços e limites dos planos no banco
 Hoje em `server/src/config/planos.ts`, `src/utils/planos.ts` e na landing. Tabela `Plano` (chave, preço, limites, features) + `GET /api/planos` público que alimenta o front e a landing; `PRECOS_MENSAIS` passa a ler do banco.

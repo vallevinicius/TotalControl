@@ -1,6 +1,7 @@
 import { app } from './app.js';
 import { garantirAdminPlataforma } from './lib/adminBootstrap.js';
 import { limparSessoesAntigas } from './lib/sessao.js';
+import { limparCadastrosNaoConfirmados } from './lib/verificacaoEmail.js';
 import { executarAvisos } from './lib/avisos.js';
 import { log, reportarErro } from './lib/observabilidade.js';
 
@@ -26,7 +27,10 @@ garantirAdminPlataforma()
       log('info', `API rodando em http://localhost:${PORT}`);
     });
     // Faxina das renovações vencidas: na subida e a cada 6 horas.
-    const faxina = () => limparSessoesAntigas().catch((e) => console.error('Falha na limpeza de sessões:', e));
+    const faxina = () => {
+      limparSessoesAntigas().catch((e) => console.error('Falha na limpeza de sessões:', e));
+      limparCadastrosNaoConfirmados().catch((e) => console.error('Falha na limpeza de cadastros não confirmados:', e));
+    };
     faxina();
     setInterval(faxina, 6 * 3_600_000).unref();
     // Avisos por e-mail: de hora em hora, entre 8h e 20h (horário do servidor). Cada aviso
