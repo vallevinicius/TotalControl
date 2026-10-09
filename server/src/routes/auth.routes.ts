@@ -10,6 +10,8 @@ import { emailRecuperacaoDeSenha, emailSenhaAlterada, enviarEmail } from '../lib
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { acoesEfetivas, descontoMaximoPercentual } from '../config/acoes.js';
 import { mensagemDeValidacao, senhaForte, VERSAO_TERMOS } from '../lib/senha.js';
+import { validarCaptcha } from '../lib/captcha.js';
+import { confirmarEmail, enviarVerificacaoDeEmail, reenviarVerificacao } from '../lib/verificacaoEmail.js';
 import { calcularTrialExpiraEm, LIMITES_POR_PLANO, motivoAcessoExpirado } from '../config/planos.js';
 
 export const authRouter = Router();
@@ -39,6 +41,8 @@ const registerSchema = z.object({
   email: z.string().email(),
   senha: senhaForte,
   /** Consentimento explícito: o servidor não cria a conta sem ele. */
+  /** Token do widget Turnstile (obrigatório quando TURNSTILE_SECRET_KEY está definida). */
+  captchaToken: z.string().max(4096).optional(),
   aceitouTermos: z.literal(true, { errorMap: () => ({ message: 'É preciso aceitar os Termos de Uso e a Política de Privacidade.' }) }),
 });
 
@@ -70,6 +74,10 @@ authRouter.post('/register', async (req, res) => {
     email,
     senha,
   } = parse.data;
+
+  const captcha = await validarCaptcha(parse.data.captchaToken, req.ip);
+  if (captcha === 'invalido') return res.status(400).json({ erro: 'Não foi possível confirmar que você não é um robô. Tente de novo.', codigo: 'CAPTCHA_INVALIDO' });
+  if (captcha === 'indisponivel') return res.status(503).json({ erro: 'Não conseguimos validar o captcha agora. Tente novamente em instantes.' });
 
   const cnpj = normalizarCnpj(cnpjInformado);
   if (!cnpj) {
@@ -136,13 +144,34 @@ authRouter.post('/register', async (req, res) => {
         raiz: true,
         aceiteTermosEm: new Date(),
         aceiteTermosVersao: VERSAO_TERMOS,
+        emailPendente: true,
       },
     });
     await tx.categoria.create({ data: { tenantId: tenant.id, nome: 'Geral' } });
     return { tenant, usuario };
   });
 
-  res.status(201).json(await emitirSessao(usuario, req));
+  // Sem sessão: a conta só entra depois de confirmar o e-mail. O envio é depois da resposta (SMTP lento não trava o cadastro).
+  res.status(201).json({ pendenteVerificacao: true, email: usuario.email });
+  enviarVerificacaoDeEmail(usuario).catch((erro) => console.error('Falha ao enviar o e-mail de confirmação:', erro));
+});
+
+const verificarSchema = z.object({ token: z.string().min(20) });
+
+authRouter.post('/verificar-email', async (req, res) => {
+  const parse = verificarSchema.safeParse(req.body);
+  if (!parse.success || !(await confirmarEmail(parse.data.token))) {
+    return res.status(400).json({ erro: 'Este link de confirmação é inválido ou venceu. Peça um novo na tela de login.' });
+  }
+  res.status(204).end();
+});
+
+/** Pede um link novo. A resposta é sempre a mesma, exista a conta ou não. */
+authRouter.post('/reenviar-verificacao', async (req, res) => {
+  const parse = z.object({ email: z.string().email() }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ erro: 'Informe um e-mail válido.' });
+  res.json({ mensagem: 'Se existir um cadastro pendente com esse e-mail, enviamos um novo link de confirmação.' });
+  reenviarVerificacao(parse.data.email).catch((erro) => console.error('Falha ao reenviar a confirmação de e-mail:', erro));
 });
 
 const loginSchema = z.object({
@@ -176,6 +205,11 @@ authRouter.post('/login', async (req, res) => {
   const senhaConfere = await bcrypt.compare(senha, usuario.senhaHash);
   if (!senhaConfere) {
     return res.status(401).json({ erro: 'E-mail ou senha inválidos.' });
+  }
+
+  // Só depois de acertar a senha (não revela que o e-mail existe para quem não a sabe).
+  if (usuario.emailPendente) {
+    return res.status(403).json({ erro: 'Confirme seu e-mail para entrar. Enviamos um link quando você se cadastrou.', codigo: 'EMAIL_NAO_VERIFICADO' });
   }
 
   res.json(await emitirSessao(usuario, req));

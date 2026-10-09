@@ -258,3 +258,10 @@ Além das telas (`permissoes`), cada usuário tem `acoes`: o que pode fazer dent
 - **Vendas recusadas:** se o servidor recusa (ex.: caixa já fechado por outro aparelho), a venda fica parada num aviso vermelho no PDV com "Tentar de novo" e "Descartar". Nada some sozinho.
 - **Só funciona no build de produção** (`npm run build && npm run preview`); em `npm run dev` o service worker fica desligado.
 - **Roteiro de teste:** build, `preview`, entre, abra o caixa e a tela do PDV (uma vez com internet); no DevTools, aba Network, marque "Offline"; recarregue (deve abrir), venda 2 itens (aparece "venda guardada"), desmarque "Offline" (deve enviar sozinho em segundos) e confira a venda nos relatórios.
+
+### 11. Cadastro: e-mail confirmado e captcha
+
+- O cadastro self-service **não entra direto**: cria a conta com `emailPendente` e manda um link (vale 24 h, uso único, guardado só como hash). O login responde `EMAIL_NAO_VERIFICADO` (só depois de acertar a senha, para não revelar que a conta existe) e a tela oferece o reenvio (1 por minuto).
+- Usuários criados por um gestor, por convite ou pelo admin já nascem confirmados.
+- Cadastro que **nunca confirma** é apagado depois de 7 dias (faxina que roda a cada 6 h). Isso libera o CNPJ e o e-mail e impede que alguém "reserve" o CNPJ de terceiros.
+- **Captcha:** Cloudflare Turnstile no cadastro. Com `TURNSTILE_SECRET_KEY` definida o servidor exige e confere o token na Cloudflare (se ela estiver fora do ar, recusa com 503 em vez de deixar passar). Sem a variável o captcha fica desligado. Chaves de teste que sempre passam estão no `server/.env.example`.

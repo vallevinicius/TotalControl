@@ -25,7 +25,7 @@ export function configurarCors() {
 
 const aoExceder = { erro: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' };
 
-function limitador(opcoes: { janelaMin: number; limite: number; porConta?: boolean; ignorarSucesso?: boolean }) {
+function limitador(opcoes: { janelaMin: number; limite: number | (() => number); porConta?: boolean; ignorarSucesso?: boolean }) {
   return rateLimit({
     windowMs: opcoes.janelaMin * 60_000,
     limit: opcoes.limite,
@@ -56,7 +56,8 @@ export const limiteRedefinirSenha = limitador({ janelaMin: 15, limite: 20 });
 /** Renovação de sessão: uso normal é 1 a cada 30 min por pessoa; o teto segura tentativa de adivinhar tokens. */
 export const limiteRefresh = limitador({ janelaMin: 15, limite: 60 });
 /** Cadastro: segura quem cria contas de teste em série. */
-export const limiteCadastro = limitador({ janelaMin: 60, limite: 5 });
+// (LIMITE_CADASTRO_HORA existe para os testes, que criam muitas contas do mesmo IP.)
+export const limiteCadastro = limitador({ janelaMin: 60, limite: () => Number(process.env.LIMITE_CADASTRO_HORA) || 5 });
 export const limiteWebhook = limitador({ janelaMin: 1, limite: 120 });
 /** Teto geral da API por IP, só pra conter abuso grosseiro. */
 export const limiteGeral = limitador({ janelaMin: 1, limite: 600 });

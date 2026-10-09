@@ -187,6 +187,8 @@ export async function login(email: string, senha: string): Promise<void> {
 }
 
 export interface RegistrarLojaPayload {
+  /** Token do captcha (Turnstile), quando o servidor o exige. */
+  captchaToken?: string;
   /** Aceite dos Termos e da Política de Privacidade (a API exige true). */
   aceitouTermos: boolean;
   nomeFantasia: string;
@@ -212,12 +214,17 @@ export interface RegistrarLojaPayload {
   senha: string;
 }
 
-export async function registrarLoja(payload: RegistrarLojaPayload): Promise<void> {
-  const { token, refreshToken } = await requisitar<{ token: string; refreshToken: string }>('/auth/register', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  setToken(token, refreshToken);
+/** Cria a conta. Não entra: a pessoa recebe um link por e-mail e só depois consegue fazer login. */
+export async function registrarLoja(payload: RegistrarLojaPayload): Promise<{ email: string }> {
+  return requisitar('/auth/register', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function verificarEmail(token: string): Promise<void> {
+  await requisitar('/auth/verificar-email', { method: 'POST', body: JSON.stringify({ token }) });
+}
+
+export async function reenviarVerificacao(email: string): Promise<void> {
+  await requisitar('/auth/reenviar-verificacao', { method: 'POST', body: JSON.stringify({ email }) });
 }
 
 type SessaoMe = { usuario: Usuario; tenant: Tenant; lojas: LojaResumo[] };

@@ -174,9 +174,13 @@ model Usuario {
   /// Aceite dos Termos de Uso/Privacidade no cadastro (prova de consentimento, LGPD).
   aceiteTermosEm     DateTime?
   aceiteTermosVersao String?
+  /// Cadastro self-service ainda sem o e-mail confirmado: não consegue entrar até clicar no link.
+  /// (Contas criadas por um gestor ou pelo admin nascem confirmadas.)
+  emailPendente Boolean    @default(false)
   criadoEm  DateTime     @default(now())
 
   sessoes                SessaoRefresh[]
+  tokensVerificacao      TokenVerificacaoEmail[]
   tokensSenha            TokenSenha[]
   tenant                 Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transacoes             Transacao[]
@@ -422,6 +426,20 @@ model SessaoRefresh {
 
 /// Link de redefinição de senha enviado por e-mail: uso único, vale 1 hora, guardado só como hash.
 model TokenSenha {
+  id        String    @id @default(uuid())
+  usuarioId String
+  tokenHash String    @unique
+  expiraEm  DateTime
+  usadoEm   DateTime?
+  criadoEm  DateTime  @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+}
+
+/// Link de confirmação do e-mail do cadastro: uso único, vale 24 horas, guardado só como hash.
+model TokenVerificacaoEmail {
   id        String    @id @default(uuid())
   usuarioId String
   tokenHash String    @unique
