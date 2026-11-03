@@ -6,6 +6,7 @@ import { getDashboardResumo, getSerieDoDashboard } from '@/services/apiService';
 import { GraficoBarras } from '@/components/Common/GraficoBarras';
 import { formatarMoeda } from '@/utils/formatters';
 import { OnboardingChecklist } from './OnboardingChecklist';
+import { LucroCards } from './LucroCards';
 import type { PontoDeVendas, ResumoDashboard } from '@/types';
 
 interface CartaoMetricaProps {
@@ -56,6 +57,8 @@ export function DashboardScreen() {
             <CartaoMetrica rotulo="Ticket médio" valor={formatarMoeda(resumo.ticketMedio, tenant)} />
             <CartaoMetrica rotulo="Produtos com estoque baixo" valor={String(resumo.produtosComEstoqueBaixo)} />
           </div>
+
+          <LucroCards />
 
           {serie.length > 0 && (
             <div className="rounded-xl border border-ink-700 bg-ink-800 p-6">

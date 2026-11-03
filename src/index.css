@@ -17,7 +17,7 @@
   --tenant-primary: 16 185 129;
   --tenant-primary-hover: 5 150 105;
   --tenant-primary-soft: 16 185 129;
-  --tenant-primary-foreground: 255 255 255;
+  --tenant-primary-foreground: 5 5 5;
 
   /* Tema claro (padrão): branco neutro de verdade. */
   --ink-900: 250 250 250;
@@ -35,7 +35,7 @@
   --tenant-primary: 16 185 129;
   --tenant-primary-hover: 52 211 153;
   --tenant-primary-soft: 16 185 129;
-  --tenant-primary-foreground: 255 255 255;
+  --tenant-primary-foreground: 5 5 5;
 
   /* Preto neutro de verdade, sem tingimento azul/roxo no cinza. */
   --ink-900: 5 5 5;

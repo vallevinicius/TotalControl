@@ -3,6 +3,7 @@ import { cnpjValido, cpfValido, normalizarCnpj } from '../src/lib/documentos.js'
 import { codigoAtual, gerarSegredoTotp, verificarTotp } from '../src/lib/totp.js';
 import { senhaForte } from '../src/lib/senha.js';
 import { verificarProducao } from '../src/lib/verificarProducao.js';
+import { custoDaVenda, resumirLucro, segundaDaSemana } from '../src/lib/lucro.js';
 import { calcularTrialExpiraEm, DIAS_TRIAL, motivoAcessoExpirado } from '../src/config/planos.js';
 
 describe('documentos', () => {
@@ -127,5 +128,53 @@ describe('verificarProducao', () => {
     const { SMTP_HOST: _a, MERCADOPAGO_ACCESS_TOKEN: _b, TURNSTILE_SECRET_KEY: _c, ...resto } = ok;
     expect(vars(resto, 'erro')).toEqual([]);
     expect(vars(resto, 'aviso')).toEqual(['SMTP_HOST', 'MERCADOPAGO_ACCESS_TOKEN', 'TURNSTILE_SECRET_KEY']);
+  });
+});
+
+describe('lucro', () => {
+  const item = (quantidade: number, custoUnitario: number | null, precoCusto: number) => ({ quantidade, custoUnitario, produto: { precoCusto } });
+
+  it('custoDaVenda usa o custo gravado e, sem ele, o custo atual do produto', () => {
+    expect(custoDaVenda([item(2, 3, 9), item(1, null, 4)])).toBe(10);
+    expect(custoDaVenda([item(2, 0, 9)])).toBe(0); // custo gravado zero é válido, não cai no atual
+    expect(custoDaVenda([])).toBe(0);
+  });
+
+  it('segundaDaSemana devolve a segunda da semana (domingo fecha a semana anterior)', () => {
+    expect(segundaDaSemana('2026-03-11')).toBe('2026-03-09'); // quarta
+    expect(segundaDaSemana('2026-03-09')).toBe('2026-03-09'); // segunda
+    expect(segundaDaSemana('2026-03-15')).toBe('2026-03-09'); // domingo
+    expect(segundaDaSemana('2026-03-01')).toBe('2026-02-23'); // atravessa o mês
+  });
+
+  it('resumirLucro separa hoje, semana e mês no fuso da loja', () => {
+    const agora = new Date('2026-03-11T15:00:00Z'); // quarta, 12h em São Paulo
+    const venda = (iso: string, valor: number, custo: number) => ({ timestamp: new Date(iso), valorTotal: valor, itens: [item(1, custo, 0)] });
+    const r = resumirLucro(
+      [
+        venda('2026-03-11T14:00:00Z', 100, 40), // hoje
+        venda('2026-03-10T14:00:00Z', 50, 20), // terça (semana)
+        venda('2026-03-04T14:00:00Z', 30, 10), // semana passada (mês)
+        venda('2026-02-27T14:00:00Z', 999, 1), // mês passado: fora
+        venda('2026-03-12T14:00:00Z', 777, 1), // futuro: fora
+      ],
+      'America/Sao_Paulo',
+      agora,
+    );
+    expect(r.hoje).toEqual({ faturamento: 100, custo: 40, lucro: 60, vendas: 1 });
+    expect(r.semana).toEqual({ faturamento: 150, custo: 60, lucro: 90, vendas: 2 });
+    expect(r.mes).toEqual({ faturamento: 180, custo: 70, lucro: 110, vendas: 3 });
+    expect(r.desde).toEqual({ semana: '2026-03-09', mes: '2026-03-01' });
+  });
+
+  it('resumirLucro: venda das 23h cai no dia local, não no de UTC', () => {
+    const agora = new Date('2026-03-11T15:00:00Z');
+    const r = resumirLucro([{ timestamp: new Date('2026-03-11T02:00:00Z'), valorTotal: 10, itens: [] }], 'America/Sao_Paulo', agora);
+    expect(r.hoje.vendas).toBe(0); // 23h do dia 10 em São Paulo
+    expect(r.semana.vendas).toBe(1);
+  });
+
+  it('resumirLucro sem vendas devolve tudo zerado', () => {
+    expect(resumirLucro([], 'America/Sao_Paulo').hoje).toEqual({ faturamento: 0, custo: 0, lucro: 0, vendas: 0 });
   });
 });

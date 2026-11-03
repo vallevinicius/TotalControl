@@ -25,3 +25,22 @@ export function clarearHex(hex: string, quantidade = 0.2): string {
   const paraHex = (v: number) => v.toString(16).padStart(2, '0');
   return `#${paraHex(canal(16))}${paraHex(canal(8))}${paraHex(canal(0))}`;
 }
+
+function luminancia(r: number, g: number, b: number): number {
+  const linear = (c: number) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+}
+
+/** Cor do texto (no formato "r g b" das variáveis CSS) que fica mais legível sobre o fundo
+ * `rgb` ("r g b"): quase preto ou branco, o que tiver maior contraste (WCAG). O verde padrão
+ * da marca pede texto escuro; cores de loja escuras (azul-marinho etc.) pedem branco. */
+export function corDoTextoSobre(rgb: string): string {
+  const [r, g, b] = rgb.split(' ').map(Number);
+  const fundo = luminancia(r, g, b);
+  const contrasteComBranco = 1.05 / (fundo + 0.05);
+  const contrasteComEscuro = (fundo + 0.05) / (luminancia(5, 5, 5) + 0.05);
+  return contrasteComEscuro >= contrasteComBranco ? '5 5 5' : '255 255 255';
+}

@@ -293,6 +293,36 @@ export interface Cliente {
   criadoEm: string;
 }
 
+export interface ResumoDoPeriodo {
+  faturamento: number;
+  custo: number;
+  lucro: number;
+  vendas: number;
+}
+
+/** Lucro bruto (vendas menos custo dos produtos) de hoje, da semana e do mês. */
+export interface ResumoDeLucro {
+  hoje: ResumoDoPeriodo;
+  semana: ResumoDoPeriodo;
+  mes: ResumoDoPeriodo;
+  desde: { semana: string; mes: string };
+}
+
+export interface RankingCliente {
+  clienteId: string;
+  nome: string;
+  telefone?: string;
+  compras: number;
+  total: number;
+  ticketMedio: number;
+  ultimaCompra?: string;
+}
+
+export interface RankingClientes {
+  clientes: RankingCliente[];
+  semCliente: { compras: number; total: number };
+}
+
 /** Estrutura agregada consumida pelo Dashboard. */
 export interface ResumoDashboard {
   faturamentoDoDia: number;

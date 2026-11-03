@@ -5,6 +5,8 @@ import { diaNoFuso, diasDoPeriodo } from '../lib/datas.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { requireFeaturePlano } from '../middleware/plano.js';
+import { lerPaginacao, montarResposta } from '../lib/paginacao.js';
+import { arredondar } from '../config/pdv.js';
 
 export const relatoriosRouter = Router();
 relatoriosRouter.use(requireAuth, requerirTela(['relatorios']), requireFeaturePlano('relatorios'));
@@ -258,4 +260,97 @@ relatoriosRouter.get('/estoque-parado', async (req, res) => {
     .sort((a, b) => b.valorParado - a.valorParado);
 
   res.json({ dias, valorTotal: Number(parados.reduce((a, p) => a + p.valorParado, 0).toFixed(2)), itens: parados });
+});
+
+/** Vendas do período, paginadas e com busca (cliente, vendedor ou código da venda). */
+relatoriosRouter.get('/vendas-lista', async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const inicio = typeof req.query.inicio === 'string' ? new Date(req.query.inicio) : null;
+  const fim = typeof req.query.fim === 'string' ? new Date(req.query.fim) : null;
+  if (fim) fim.setUTCHours(23, 59, 59, 999);
+  const termo = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+  const { pagina, tamanho } = lerPaginacao(req.query);
+
+  const where = {
+    tenantId,
+    ...VENDA_VALIDA,
+    timestamp: { gte: inicio ?? undefined, lte: fim ?? undefined },
+    ...(termo
+      ? { OR: [{ cliente: { nome: { contains: termo } } }, { vendedor: { nome: { contains: termo } } }, { id: { startsWith: termo } }] }
+      : {}),
+  };
+
+  const [vendas, total] = await Promise.all([
+    prisma.transacao.findMany({
+      where,
+      include: { itens: { select: { quantidade: true } }, cliente: { select: { nome: true } }, vendedor: { select: { nome: true } } },
+      orderBy: { timestamp: 'desc' },
+      skip: (pagina - 1) * tamanho,
+      take: tamanho,
+    }),
+    prisma.transacao.count({ where }),
+  ]);
+
+  res.json(
+    montarResposta(
+      vendas.map((v) => ({
+        id: v.id,
+        timestamp: v.timestamp.toISOString(),
+        valorTotal: Number(v.valorTotal),
+        formaPagamento: v.formaPagamento ?? undefined,
+        clienteNome: v.cliente?.nome,
+        vendedorNome: v.vendedor?.nome,
+        quantidadeItens: v.itens.reduce((acc, i) => acc + i.quantidade, 0),
+      })),
+      total,
+      pagina,
+      tamanho,
+    ),
+  );
+});
+
+/** Ranking de clientes do período por valor comprado (até 50). Vendas sem cliente informado
+ * não entram no ranking e vêm somadas à parte. */
+relatoriosRouter.get('/clientes-ranking', async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const p = periodo(req);
+  if (!p) return res.status(400).json({ erro: 'Informe o período (inicio e fim, AAAA-MM-DD).' });
+
+  const fim = new Date(p.fim);
+  fim.setUTCHours(23, 59, 59, 999);
+  const onde = { tenantId, ...VENDA_VALIDA, timestamp: { gte: new Date(p.inicio), lte: fim } };
+
+  const [porCliente, semCliente] = await Promise.all([
+    prisma.transacao.groupBy({
+      by: ['clienteId'],
+      where: { ...onde, clienteId: { not: null } },
+      _sum: { valorTotal: true },
+      _count: { _all: true },
+      _max: { timestamp: true },
+      orderBy: { _sum: { valorTotal: 'desc' } },
+      take: 50,
+    }),
+    prisma.transacao.aggregate({ where: { ...onde, clienteId: null }, _sum: { valorTotal: true }, _count: { _all: true } }),
+  ]);
+
+  const ids = porCliente.map((c) => c.clienteId!);
+  const clientes = await prisma.cliente.findMany({ where: { tenantId, id: { in: ids } }, select: { id: true, nome: true, telefone: true } });
+  const dados = new Map(clientes.map((c) => [c.id, c]));
+
+  res.json({
+    clientes: porCliente.map((c) => {
+      const total = Number(c._sum.valorTotal ?? 0);
+      const compras = c._count._all;
+      return {
+        clienteId: c.clienteId!,
+        nome: dados.get(c.clienteId!)?.nome ?? 'Cliente removido',
+        telefone: dados.get(c.clienteId!)?.telefone ?? undefined,
+        compras,
+        total: arredondar(total),
+        ticketMedio: arredondar(total / compras),
+        ultimaCompra: c._max.timestamp?.toISOString(),
+      };
+    }),
+    semCliente: { compras: semCliente._count._all, total: arredondar(Number(semCliente._sum.valorTotal ?? 0)) },
+  });
 });
