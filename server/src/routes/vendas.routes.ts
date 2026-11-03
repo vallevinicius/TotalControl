@@ -167,6 +167,7 @@ vendasRouter.post('/', async (req, res) => {
         quantidade: number;
         valorUnitarioPraticado: number;
         subtotal: number;
+        custoUnitario: number;
       }> = [];
 
       for (const item of itens) {
@@ -189,6 +190,7 @@ vendasRouter.post('/', async (req, res) => {
           quantidade: item.quantidade,
           valorUnitarioPraticado: valorUnitario,
           subtotal: arredondar(valorUnitario * item.quantidade),
+          custoUnitario: Number(produto.precoCusto),
         });
       }
 

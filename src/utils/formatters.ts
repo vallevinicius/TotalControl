@@ -24,6 +24,12 @@ export function formatarDataHora(isoString: string, tenant: Tenant | null): stri
   }).format(new Date(isoString));
 }
 
+/** Só a data (dd/mm/aaaa), no fuso horário da loja. */
+export function formatarData(isoString: string, tenant: Tenant | null): string {
+  const fusoHorario = tenant?.configuracoes.fusoHorario ?? 'America/Sao_Paulo';
+  return new Intl.DateTimeFormat('pt-BR', { timeZone: fusoHorario, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(isoString));
+}
+
 export function formatarHora(isoString: string, tenant: Tenant | null): string {
   const fusoHorario = tenant?.configuracoes.fusoHorario ?? 'America/Sao_Paulo';
   return new Intl.DateTimeFormat('pt-BR', {

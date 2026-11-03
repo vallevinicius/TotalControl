@@ -315,6 +315,9 @@ model ItemTransacao {
   quantidade             Int
   valorUnitarioPraticado Decimal @db.Decimal(12, 2)
   subtotal               Decimal @db.Decimal(12, 2)
+  /// Preço de custo do produto NA HORA da venda, pro lucro não mudar quando o custo for reajustado.
+  /// Nulo nas vendas antigas: nelas o lucro usa o custo atual do produto (estimativa).
+  custoUnitario          Decimal? @db.Decimal(12, 2)
 
   transacao Transacao @relation(fields: [transacaoId], references: [id], onDelete: Cascade)
   produto   Produto   @relation(fields: [productId], references: [id])

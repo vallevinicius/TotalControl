@@ -3,7 +3,7 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { AvisoAssinatura } from './AvisoAssinatura';
 import { useTenant } from '@/contexts/TenantContext';
-import { hexParaRgb, clarearHex } from '@/utils/cores';
+import { hexParaRgb, clarearHex, corDoTextoSobre } from '@/utils/cores';
 
 interface AppLayoutProps {
   titulo: string;
@@ -28,6 +28,7 @@ export function AppLayout({ titulo, subtitulo, children }: AppLayoutProps) {
       '--tenant-primary': rgb,
       '--tenant-primary-hover': rgbHover ?? rgb,
       '--tenant-primary-soft': rgb,
+      '--tenant-primary-foreground': corDoTextoSobre(rgb),
     } as CSSProperties;
   }, [tenant?.configuracoes.corPrincipalDoTema, tenant?.configuracoes.corPrincipalHover]);
 

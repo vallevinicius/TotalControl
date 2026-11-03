@@ -8,6 +8,8 @@ import { imprimir } from '@/utils/imprimir';
 import { formatarMoeda, formatarDataHora, formatarFormaPagamento } from '@/utils/formatters';
 import { baixarCsv } from '@/utils/csv';
 import { planoPermiteMultiLoja } from '@/utils/planos';
+import { RankingClientes } from './RankingClientes';
+import { VendasDoPeriodo } from './VendasDoPeriodo';
 import type { CurvaAbc, EstoqueParado, PontoDeVendas, RelatorioConsolidado, RelatorioVendas } from '@/types';
 
 function inicioDoMesAtual(): string {
@@ -44,6 +46,8 @@ export function RelatoriosScreen() {
   const { tenant } = useTenant();
   const [inicio, setInicio] = useState(inicioDoMesAtual());
   const [fim, setFim] = useState(hoje());
+  // Período que está valendo na tela (só muda ao clicar em atualizar, como o resto do relatório).
+  const [aplicado, setAplicado] = useState({ inicio: inicioDoMesAtual(), fim: hoje() });
   const [relatorio, setRelatorio] = useState<RelatorioVendas | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [comparar, setComparar] = useState(false);
@@ -56,6 +60,7 @@ export function RelatoriosScreen() {
 
   async function carregar() {
     setCarregando(true);
+    setAplicado({ inicio, fim });
     const atual = await getRelatorioVendas(inicio, fim);
     setRelatorio(atual);
 
@@ -403,42 +408,9 @@ export function RelatoriosScreen() {
             </div>
           )}
 
-          <div className="overflow-hidden rounded-xl border border-ink-700">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-ink-800 text-xs uppercase tracking-wide text-ink-400">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Data</th>
-                  <th className="px-5 py-3 font-medium">Cliente</th>
-                  <th className="px-5 py-3 font-medium">Vendedor</th>
-                  <th className="px-5 py-3 font-medium">Forma de pagamento</th>
-                  <th className="px-5 py-3 font-medium text-right">Itens</th>
-                  <th className="px-5 py-3 font-medium text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-ink-700 bg-ink-800/40">
-                {relatorio.vendas.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-5 py-6 text-center text-ink-400">
-                      Nenhuma venda no período selecionado.
-                    </td>
-                  </tr>
-                ) : (
-                  relatorio.vendas.map((venda) => (
-                    <tr key={venda.id} className="transition-colors hover:bg-ink-800">
-                      <td className="px-5 py-3.5 text-ink-300">{formatarDataHora(venda.timestamp, tenant)}</td>
-                      <td className="px-5 py-3.5 text-ink-300">{venda.clienteNome ?? '-'}</td>
-                      <td className="px-5 py-3.5 text-ink-300">{venda.vendedorNome ?? '-'}</td>
-                      <td className="px-5 py-3.5 text-ink-300">{formatarFormaPagamento(venda.formaPagamento)}</td>
-                      <td className="px-5 py-3.5 text-right text-ink-300">{venda.quantidadeItens}</td>
-                      <td className="px-5 py-3.5 text-right font-mono text-ink-100">
-                        {formatarMoeda(venda.valorTotal, tenant)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <RankingClientes inicio={aplicado.inicio} fim={aplicado.fim} />
+
+          <VendasDoPeriodo inicio={aplicado.inicio} fim={aplicado.fim} />
         </div>
       )}
     </AppLayout>

@@ -6,6 +6,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { requerirAcao, requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { requireFeaturePlano } from '../middleware/plano.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
+import { custoDaVenda } from '../lib/lucro.js';
 
 export const financeiroRouter = Router();
 financeiroRouter.use(requireAuth, requerirTela(['financeiro']), requireFeaturePlano('financeiro'));
@@ -267,8 +268,8 @@ financeiroRouter.patch('/contas/:id/reabrir', async (req, res) => {
 
 /** Receita de vendas - custo das mercadorias vendidas = lucro bruto; menos as
  * despesas (por categoria), mais outras receitas = resultado. O custo das
- * mercadorias usa o preço de custo ATUAL de cada produto (o sistema não guarda o
- * custo na hora da venda), então é uma estimativa. */
+ * mercadorias usa o custo gravado na venda; nas vendas antigas (sem custo gravado)
+ * usa o custo ATUAL do produto, então nelas é uma estimativa. */
 financeiroRouter.get('/dre', async (req, res) => {
   const { tenantId } = req.usuario!;
   const { inicio, fim } = periodoDaQuery(req);
@@ -276,7 +277,7 @@ financeiroRouter.get('/dre', async (req, res) => {
   const [vendas, lancamentos] = await Promise.all([
     prisma.transacao.findMany({
       where: { tenantId, ...VENDA_VALIDA, timestamp: { gte: inicio, lte: fim } },
-      include: { itens: { select: { quantidade: true, produto: { select: { precoCusto: true } } } } },
+      include: { itens: { select: { quantidade: true, custoUnitario: true, produto: { select: { precoCusto: true } } } } },
     }),
     prisma.lancamentoFinanceiro.findMany({ where: { tenantId, data: { gte: inicio, lte: fim }, ...REALIZADO } }),
   ]);
@@ -286,7 +287,7 @@ financeiroRouter.get('/dre', async (req, res) => {
   const descontos = vendas.reduce((a, v) => a + Number(v.desconto), 0);
   const taxasCobradas = vendas.reduce((a, v) => a + Number(v.taxas), 0);
   const receitaDeVendas = vendas.reduce((a, v) => a + Number(v.valorTotal), 0);
-  const custoMercadorias = vendas.reduce((a, v) => a + v.itens.reduce((b, i) => b + i.quantidade * Number(i.produto.precoCusto), 0), 0);
+  const custoMercadorias = vendas.reduce((a, v) => a + custoDaVenda(v.itens), 0);
 
   const porCategoria = (tipo: 'RECEITA' | 'DESPESA') => {
     const mapa = new Map<string, number>();

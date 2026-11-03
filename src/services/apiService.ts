@@ -8,7 +8,9 @@ import type {
   Produto,
   ProdutoParaImportar,
   RegistroAuditoria,
+  RankingClientes,
   RelatorioConsolidado,
+  ResumoDeLucro,
   RelatorioVendas,
   ResumoDashboard,
   ResumoFinanceiro,
@@ -779,6 +781,10 @@ export async function getDashboardResumo(): Promise<ResumoDashboard> {
   return requisitar('/dashboard/resumo');
 }
 
+export async function getLucroDoDashboard(): Promise<ResumoDeLucro> {
+  return requisitar('/dashboard/lucro');
+}
+
 export async function getSerieDoDashboard(dias = 14): Promise<PontoDeVendas[]> {
   return requisitar(`/dashboard/serie?dias=${dias}`);
 }
@@ -801,6 +807,22 @@ export async function getRelatorioVendas(inicio?: string, fim?: string): Promise
   if (fim) parametros.set('fim', fim);
   const query = parametros.toString() ? `?${parametros.toString()}` : '';
   return requisitar(`/relatorios/vendas${query}`);
+}
+
+export async function getVendasDoPeriodo(
+  inicio: string,
+  fim: string,
+  termo: string,
+  pagina: number,
+  tamanho = 20,
+): Promise<PaginaResultado<VendaResumo>> {
+  const parametros = new URLSearchParams({ inicio, fim, pagina: String(pagina), tamanho: String(tamanho) });
+  if (termo) parametros.set('q', termo);
+  return requisitar(`/relatorios/vendas-lista?${parametros.toString()}`);
+}
+
+export async function getRankingClientes(inicio: string, fim: string): Promise<RankingClientes> {
+  return requisitar(`/relatorios/clientes-ranking?inicio=${inicio}&fim=${fim}`);
 }
 
 export async function getRelatorioConsolidado(inicio?: string, fim?: string): Promise<RelatorioConsolidado> {

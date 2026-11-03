@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { requerirAdmin, requerirTela } from '../middleware/permissao.js';
 import { contarProdutosComEstoqueBaixo } from '../lib/estoque.js';
 import { diaNoFuso, ultimosDias } from '../lib/datas.js';
+import { resumirLucro } from '../lib/lucro.js';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth, requerirTela(['dashboard', 'estoque', 'pdv']));
@@ -80,4 +81,24 @@ dashboardRouter.get('/serie', requerirTela(['dashboard']), async (req, res) => {
     }
   }
   res.json([...porDia.values()].map((p) => ({ ...p, faturamento: Number(p.faturamento.toFixed(2)) })));
+});
+
+/** Faturamento, custo e lucro bruto de hoje, da semana (desde segunda) e do mês (desde o dia 1),
+ * no fuso da loja. O custo é o gravado na venda (vendas antigas: custo atual do produto). */
+dashboardRouter.get('/lucro', requerirTela(['dashboard']), async (req, res) => {
+  const { tenantId } = req.usuario!;
+  const loja = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { fusoHorario: true } });
+  const fuso = loja?.fusoHorario ?? 'America/Sao_Paulo';
+
+  // 33 dias cobrem o mês inteiro (até 31 dias) mais a folga do fuso; o corte exato é por dia local.
+  const desde = new Date(Date.now() - 33 * 86_400_000);
+  const vendas = await prisma.transacao.findMany({
+    where: { tenantId, ...VENDA_VALIDA, timestamp: { gte: desde } },
+    select: {
+      timestamp: true,
+      valorTotal: true,
+      itens: { select: { quantidade: true, custoUnitario: true, produto: { select: { precoCusto: true } } } },
+    },
+  });
+  res.json(resumirLucro(vendas, fuso));
 });
