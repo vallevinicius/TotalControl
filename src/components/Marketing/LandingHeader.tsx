@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ThemeToggle } from '@/components/Common/ThemeToggle';
 import { LogoMark } from '@/components/Common/LogoMark';
@@ -9,6 +9,16 @@ const LINKS_ANCORA = [
   { href: '#planos', rotulo: 'Planos' },
   { href: '#faq', rotulo: 'Dúvidas' },
 ];
+
+// Rola até a seção sem gravar o #hash na barra de endereço.
+function irParaSecao(evento: MouseEvent<HTMLAnchorElement>, href: string, aoRolar?: () => void) {
+  const secao = document.getElementById(href.slice(1));
+  if (!secao) return;
+  evento.preventDefault();
+  // Suavidade e prefers-reduced-motion vêm do CSS (html { scroll-behavior }).
+  secao.scrollIntoView();
+  aoRolar?.();
+}
 
 export function LandingHeader() {
   const [menuAberto, setMenuAberto] = useState(false);
@@ -25,7 +35,12 @@ export function LandingHeader() {
 
         <nav className="hidden items-center gap-6 text-sm font-medium text-ink-300 md:flex">
           {LINKS_ANCORA.map((link) => (
-            <a key={link.href} href={link.href} className="transition-colors hover:text-ink-100">
+            <a
+              key={link.href}
+              href={link.href}
+              onClick={(evento) => irParaSecao(evento, link.href)}
+              className="transition-colors hover:text-ink-100"
+            >
               {link.rotulo}
             </a>
           ))}
@@ -64,7 +79,7 @@ export function LandingHeader() {
             <a
               key={link.href}
               href={link.href}
-              onClick={() => setMenuAberto(false)}
+              onClick={(evento) => irParaSecao(evento, link.href, () => setMenuAberto(false))}
               className="rounded-lg px-3 py-2.5 text-sm font-medium text-ink-300 hover:bg-ink-800 hover:text-ink-100"
             >
               {link.rotulo}
