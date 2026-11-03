@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { cnpjValido, cpfValido, normalizarCnpj } from '../src/lib/documentos.js';
 import { codigoAtual, gerarSegredoTotp, verificarTotp } from '../src/lib/totp.js';
 import { senhaForte } from '../src/lib/senha.js';
+import { verificarProducao } from '../src/lib/verificarProducao.js';
 import { calcularTrialExpiraEm, DIAS_TRIAL, motivoAcessoExpirado } from '../src/config/planos.js';
 
 describe('documentos', () => {
@@ -85,5 +86,46 @@ describe('calcularTrialExpiraEm', () => {
     const base = { assinaturaStatus: 'NENHUMA', acessoAte: null };
     expect(motivoAcessoExpirado({ ...base, trialExpiraEm: calcularTrialExpiraEm(30, new Date('2026-01-01T12:00:00Z')) }, agora)).toBe('TRIAL');
     expect(motivoAcessoExpirado({ ...base, trialExpiraEm: calcularTrialExpiraEm(90, new Date('2026-01-01T12:00:00Z')) }, agora)).toBeNull();
+  });
+});
+
+describe('verificarProducao', () => {
+  const ok = {
+    NODE_ENV: 'production',
+    DATABASE_URL: 'mysql://app:s3nha@db:3306/totalcontrol',
+    JWT_SECRET: 'a'.repeat(48),
+    ADMIN_EMAIL: 'admin@empresa.com.br',
+    ADMIN_SENHA: 'Senh@Forte123',
+    APP_URL: 'https://app.empresa.com.br',
+    API_PUBLIC_URL: 'https://app.empresa.com.br',
+    TRUST_PROXY: '1',
+    SMTP_HOST: 'smtp.provedor.com',
+    SMTP_USER: 'u',
+    SMTP_PASS: 'p',
+    MERCADOPAGO_ACCESS_TOKEN: 'APP_USR-123',
+    MERCADOPAGO_WEBHOOK_SECRET: 'segredo',
+    TURNSTILE_SECRET_KEY: '0x4AAA',
+    SENTRY_DSN: 'https://x@sentry.io/1',
+  };
+  const vars = (env: Record<string, string | undefined>, nivel: 'erro' | 'aviso') =>
+    verificarProducao(env).filter((p) => p.nivel === nivel).map((p) => p.variavel);
+
+  it('configuração completa não tem erro nem aviso', () => {
+    expect(verificarProducao(ok)).toEqual([]);
+  });
+
+  it('ambiente vazio acusa todos os erros obrigatórios', () => {
+    expect(vars({}, 'erro')).toEqual(['NODE_ENV', 'DATABASE_URL', 'JWT_SECRET', 'ADMIN_EMAIL', 'ADMIN_SENHA', 'APP_URL']);
+  });
+
+  it('recusa segredo curto, valores de exemplo, root no banco e site sem https', () => {
+    const erros = vars({ ...ok, JWT_SECRET: 'curto', ADMIN_SENHA: 'troque-por-uma-senha-forte', DATABASE_URL: 'mysql://root:x@db/app', APP_URL: 'http://app.com' }, 'erro');
+    expect(erros).toEqual(['DATABASE_URL', 'JWT_SECRET', 'ADMIN_SENHA', 'APP_URL']);
+  });
+
+  it('serviços opcionais ausentes viram aviso, não erro', () => {
+    const { SMTP_HOST: _a, MERCADOPAGO_ACCESS_TOKEN: _b, TURNSTILE_SECRET_KEY: _c, ...resto } = ok;
+    expect(vars(resto, 'erro')).toEqual([]);
+    expect(vars(resto, 'aviso')).toEqual(['SMTP_HOST', 'MERCADOPAGO_ACCESS_TOKEN', 'TURNSTILE_SECRET_KEY']);
   });
 });

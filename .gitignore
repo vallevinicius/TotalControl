@@ -1,6 +1,81 @@
-node_modules
-dist
-dist-ssr
-*.local
+# ───────── Segredos e ambiente (NUNCA subir) ─────────
 .env
+.env.*
+!.env.example
+!.env.local.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+secrets/
+credentials*.json
+service-account*.json
+*.sqlite
+*.sqlite3
+*.db
+
+# ───────── Instruções e arquivos de IA (decisão: não publicar) ─────────
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.codex/
+.gemini/
+.github/copilot-instructions.md
+
+# ───────── Dados de runtime e uploads dos clientes ─────────
+uploads/
+apps/backend/uploads/
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ───────── Backups e dumps de banco (podem ter dado pessoal, LGPD) ─────────
+*.sql.gz
+*.dump
+*.bak
+backup/
+backups/
+dumps/
+
+# ───────── Dependências e build ─────────
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+.vercel/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+.eslintcache
+
+# ───────── Testes (artefatos) ─────────
+playwright-report/
+test-results/
+blob-report/
+
+# ───────── Prisma ─────────
+# O client gerado sai de `prisma generate`; as migrations DEVEM continuar versionadas.
+packages/database/generated/
+
+# ───────── Editor e sistema ─────────
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
